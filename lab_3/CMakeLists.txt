@@ -18,6 +18,7 @@ add_library(parallel_server_utils STATIC
 )
 target_include_directories(parallel_server_utils PUBLIC parallel_server_utils)
 target_compile_options(parallel_server_utils PRIVATE ${strict_compiler_options})
+target_link_libraries(parallel_server_utils PUBLIC iterative_server_utils)
 
 add_executable(client client.c)
 target_link_libraries(client PRIVATE iterative_server_utils)
@@ -28,9 +29,9 @@ target_link_libraries(iterative_server PRIVATE iterative_server_utils)
 target_compile_options(iterative_server PRIVATE ${strict_compiler_options})
 
 add_executable(parallel_server parallel_server.c)
-target_link_libraries(parallel_server PRIVATE iterative_server_utils parallel_server_utils)
+target_link_libraries(parallel_server PRIVATE parallel_server_utils)
 target_compile_options(parallel_server PRIVATE ${strict_compiler_options})
 
 add_executable(pool_server pool_server.c)
-target_link_libraries(pool_server PRIVATE iterative_server_utils parallel_server_utils)
+target_link_libraries(pool_server PRIVATE parallel_server_utils)
 target_compile_options(pool_server PRIVATE ${strict_compiler_options})

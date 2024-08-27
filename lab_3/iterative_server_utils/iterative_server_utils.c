@@ -7,7 +7,18 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include <stdint.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+void exit_err(const char *msg) {
+    perror(msg);
+    exit(EXIT_FAILURE);
+}
+
+void warn_err(const char *msg) {
+    perror(msg);
+}
 
 void handle_client(const int client_sock, const char* const dir_path) {
     struct message_header header;
@@ -72,9 +83,43 @@ void handle_client(const int client_sock, const char* const dir_path) {
     char buffer[CHUNK_SIZE];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        printf("Process %d read bytes: %lu\n", getpid(), bytes_read);
         send(client_sock, buffer, bytes_read, 0);
     }
 
     fclose(file);
     close(client_sock);
+}
+
+#define MAX_BACKLOG 10
+
+int create_and_bind_socket(const IterativeServerConfig *config) {
+    const int listenfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+    if (listenfd < 0)
+        exit_err("socket()");
+
+    struct sockaddr_in srv_sin4 = {0};
+    srv_sin4.sin_family = AF_INET;
+    srv_sin4.sin_port = htons(config->port);
+    srv_sin4.sin_addr.s_addr = inet_addr(config->address);
+
+    if (bind(listenfd, (struct sockaddr *)&srv_sin4, sizeof(srv_sin4)) < 0)
+        exit_err("bind()");
+
+    if (listen(listenfd, MAX_BACKLOG) < 0)
+        exit_err("listen()");
+
+    printf("Server listening on %s:%d\n", config->address, config->port);
+    return listenfd;
+}
+
+int accept_connection(const int listenfd) {
+    struct sockaddr_in cln_sin4;
+    socklen_t addrlen = sizeof(cln_sin4);
+    const int connfd = accept(listenfd, (struct sockaddr *)&cln_sin4, &addrlen);
+    if (connfd < 0) {
+        return -1;
+    }
+    printf("New connection from %s:%d\n", inet_ntoa(cln_sin4.sin_addr), ntohs(cln_sin4.sin_port));
+    return connfd;
 }

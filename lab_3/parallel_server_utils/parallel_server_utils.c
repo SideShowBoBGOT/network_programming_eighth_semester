@@ -3,52 +3,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <arpa/inet.h>
-#include <errno.h>
+#include <sys/types.h>
 
-#define MAX_BACKLOG 10
-
-int create_and_bind_socket(const ServerConfig *config) {
-    const int listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listenfd < 0)
-        exit_err("socket()");
-
-    struct sockaddr_in srv_sin4 = {0};
-    srv_sin4.sin_family = AF_INET;
-    srv_sin4.sin_port = htons(config->port);
-    srv_sin4.sin_addr.s_addr = inet_addr(config->address);
-
-    if (bind(listenfd, (struct sockaddr *)&srv_sin4, sizeof(srv_sin4)) < 0)
-        exit_err("bind()");
-
-    if (listen(listenfd, MAX_BACKLOG) < 0)
-        exit_err("listen()");
-
-    printf("Server listening on %s:%d\n", config->address, config->port);
-    return listenfd;
+static void print_config(const ParallelServerConfig *config) {
+    printf("Server Configuration:\n");
+    printf("  Address: %s\n", config->config.address);
+    printf("  Port: %d\n", config->config.port);
+    printf("  Directory Path: %s\n", config->config.dir_path);
+    printf("  Maximum Children: %d\n", config->max_children);
 }
 
-int accept_connection(const int listenfd) {
-    struct sockaddr_in cln_sin4;
-    socklen_t addrlen = sizeof(cln_sin4);
-    const int connfd = accept(listenfd, (struct sockaddr *)&cln_sin4, &addrlen);
-    if (connfd < 0) {
-        if (errno == EINTR)
-            return -1;
-        warn_err("accept()");
-        return -1;
+ParallelServerConfig handle_cmd_args(const int argc, char **argv) {
+    if (argc != 5) {
+        fprintf(stderr, "Usage: %s <server_address> <server_port> <directory_path> <max_children>\n", argv[0]);
+        exit(EXIT_FAILURE);
     }
-    printf("New connection from %s:%d\n", inet_ntoa(cln_sin4.sin_addr), ntohs(cln_sin4.sin_port));
-    return connfd;
-}
 
-void exit_err(const char *msg) {
-    perror(msg);
-    exit(EXIT_FAILURE);
-}
+    const ParallelServerConfig config = {
+        .config.address = argv[1],
+        .config.port = atoi(argv[2]),
+        .config.dir_path = argv[3],
+        .max_children = atoi(argv[4])
+    };
 
-void warn_err(const char *msg) {
-    perror(msg);
+    print_config(&config);
+
+    return config;
 }
