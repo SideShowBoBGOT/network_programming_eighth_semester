@@ -22,6 +22,7 @@ static void handle_parent_process(const int connfd, int* active_children) {
     if (close(connfd) < 0)
         warn_err("close()");
     (*active_children)++;
+    printf("Working child processes: %d\n", *active_children);
 }
 
 volatile sig_atomic_t keep_running = 1;
@@ -33,9 +34,29 @@ static void handle_sigint(const int) {
 static void reap_child_processes(int* active_children) {
     while (1) {
         const pid_t pid = waitpid(-1, NULL, WNOHANG);
-        if (pid == -1)
+        switch (pid) {
+            case -1: {
+                if (errno != ECHILD)
+                    exit_err("waitpid()");
+                return;
+            }
+            case 0: {
+                return;
+            }
+            default: {
+                printf("Process %jd exited\n", (intmax_t)pid);
+                (*active_children)--;
+            }
+        }
+    }
+}
+
+static void wait_finish_child_processes(int* active_children) {
+    while (1) {
+        const pid_t pid = waitpid(-1, NULL, WNOHANG);
+        if(pid == -1)
             break;
-        if (pid > 0) {
+        if(pid > 0) {
             printf("Process %jd exited\n", (intmax_t)pid);
             (*active_children)--;
         }
@@ -52,15 +73,14 @@ static void run_server(const ParallelServerConfig *config) {
     while(keep_running) {
         reap_child_processes(&active_children);
 
-        if (active_children >= config->max_children) {
-            printf("No processes available\n");
-            sleep(1);
-            continue;
-        }
-
         const int connfd = accept_connection(listenfd);
         if (connfd < 0)
             continue;
+
+        if (active_children >= config->max_children) {
+            printf("No processes available\n");
+            continue;
+        }
 
         pid_t pid = fork();
         if (pid < 0) {
@@ -71,7 +91,7 @@ static void run_server(const ParallelServerConfig *config) {
             handle_parent_process(connfd, &active_children);
         }
     }
-    reap_child_processes(&active_children);
+    wait_finish_child_processes(&active_children);
 
     close(listenfd);
 }

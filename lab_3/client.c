@@ -12,7 +12,6 @@ typedef struct {
     int port;
     const char *filename;
     uint32_t max_file_size;
-    size_t chunk_size;
 } ClientConfig;
 
 static void print_config(const ClientConfig *config) {
@@ -24,8 +23,8 @@ static void print_config(const ClientConfig *config) {
 }
 
 static ClientConfig handle_cmd_args(const int argc, char **argv) {
-    if (argc != 6) {
-        fprintf(stderr, "Usage: %s <server_address> <server_port> <filename> <max_file_size> <chunk_size>\n", argv[0]);
+    if (argc != 5) {
+        fprintf(stderr, "Usage: %s <server_address> <server_port> <filename> <max_file_size>\n", argv[0]);
         exit(1);
     }
 
@@ -33,8 +32,7 @@ static ClientConfig handle_cmd_args(const int argc, char **argv) {
         .address = argv[1],
         .port = atoi(argv[2]),
         .filename = argv[3],
-        .max_file_size = atol(argv[4]),
-        .chunk_size = atol(argv[5])
+        .max_file_size = atol(argv[4])
     };
 
     print_config(&config);
@@ -78,8 +76,8 @@ static void send_receive_check_protocol_version(const int sock) {
     }
 }
 
-static void send_file_request(const int sock, const char* const filename, const size_t chunk_size) {
-    const send_info_t send_info = {strlen(filename), chunk_size};
+static void send_filename_length(const int sock, const char* const filename) {
+    const send_info_t send_info = {strlen(filename)};
     send(sock, &send_info, sizeof(send_info), 0);
     send(sock, filename, send_info.file_name_length, 0);
 }
@@ -98,7 +96,7 @@ static file_size_t receive_file_info(const int sock) {
     return file_size;
 }
 
-static void send_receive_readiness(const int sock, const file_size_t file_info, const uint32_t max_file_size) {
+static size_t send_receive_readiness(const int sock, const file_size_t file_info, const uint32_t max_file_size) {
     const file_receive_readiness_t readiness = file_info.size > max_file_size ? REFUSE_TO_RECEIVE : READY_TO_RECEIVE;
     send(sock, &readiness, sizeof(readiness), 0);
     if(readiness == REFUSE_TO_RECEIVE) {
@@ -106,11 +104,16 @@ static void send_receive_readiness(const int sock, const file_size_t file_info, 
         close(sock);
         exit(1);
     }
+    size_t chunk_size;
+    recv(sock, &chunk_size, sizeof(chunk_size), 0);
+    return chunk_size;
 }
 
 static void receive_file(
-    const int sock, const file_size_t file_info,
-    const uint32_t chunk_size, const char* const filename
+    const int sock,
+    const file_size_t file_info,
+    const char* const filename,
+    const size_t chunk_size
 ) {
     // Receive and save file content
     FILE *file = fopen(filename, "wb");
@@ -143,9 +146,9 @@ int main(const int argc, char *argv[]) {
     const ClientConfig config = handle_cmd_args(argc, argv);
     const int sock = create_and_bind_socket(config.port, config.address);
     send_receive_check_protocol_version(sock);
-    send_file_request(sock, config.filename, config.chunk_size);
+    send_filename_length(sock, config.filename);
     const file_size_t file_size = receive_file_info(sock);
-    send_receive_readiness(sock, file_size, config.max_file_size);
-    receive_file(sock, file_size, config.chunk_size, config.filename);
+    const size_t chunk_size = send_receive_readiness(sock, file_size, config.max_file_size);
+    receive_file(sock, file_size, config.filename, chunk_size);
     return EXIT_SUCCESS;
 }

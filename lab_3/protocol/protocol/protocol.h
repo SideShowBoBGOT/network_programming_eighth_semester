@@ -14,7 +14,6 @@ typedef enum {
 
 typedef struct {
     uint16_t file_name_length;
-    size_t chunk_size;
 } send_info_t;
 
 typedef struct {

@@ -68,6 +68,8 @@ static bool check_filename(
     return true;
 }
 
+const size_t CHUNK_SIZE = 1;
+
 static bool check_file_readiness(const int client_sock) {
     file_receive_readiness_t file_receive_readiness;
     recv(client_sock, &file_receive_readiness, sizeof(file_receive_readiness), 0);
@@ -76,6 +78,7 @@ static bool check_file_readiness(const int client_sock) {
         close(client_sock);
         return false;
     }
+    send(client_sock, &CHUNK_SIZE, sizeof(CHUNK_SIZE), 0);
     return true;
 }
 
@@ -103,11 +106,10 @@ void handle_client(
         return;
     }
 
-    const size_t chunk_size = send_info.chunk_size;
-    char buffer[chunk_size];
+    char buffer[CHUNK_SIZE];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        printf("Process %d read bytes: %lu\n", getpid(), bytes_read);
+        // printf("Process %d read bytes: %lu\n", getpid(), bytes_read);
         send(client_sock, buffer, bytes_read, 0);
     }
 
