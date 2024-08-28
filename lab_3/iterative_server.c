@@ -37,7 +37,7 @@ static void handle_sigint(const int) {
 }
 
 static void run_server(const IterativeServerConfig *config) {
-    const int listenfd = create_and_bind_socket(config);
+    const int listenfd = create_and_bind_socket(config->port, config->address);
     signal(SIGINT, handle_sigint);
     while (keep_running) {
         const int connfd = accept_connection(listenfd);

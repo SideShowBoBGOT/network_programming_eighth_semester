@@ -45,7 +45,7 @@ static void reap_child_processes(int* active_children) {
 }
 
 static void run_server(const ParallelServerConfig *config) {
-    const int listenfd = create_and_bind_socket(&config->config);
+    const int listenfd = create_and_bind_socket(config->config.port, config->config.address);
     int active_children = 0;
     signal(SIGINT, handle_sigint);
 

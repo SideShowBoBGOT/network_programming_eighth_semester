@@ -29,7 +29,7 @@ static void child_process(const int listenfd, const char* const dir_path) {
 }
 
 static void run_server(const ParallelServerConfig* const config) {
-    const int listenfd = create_and_bind_socket(&config->config);
+    const int listenfd = create_and_bind_socket(config->config.port, config->config.address);
 
     pid_t pids[config->max_children];
     for (int i = 0; i < config->max_children; i++) {

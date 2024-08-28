@@ -10,6 +10,9 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
+
+#include <protocol/protocol.h>
 
 void exit_err(const char *msg) {
     perror(msg);
@@ -20,56 +23,76 @@ void warn_err(const char *msg) {
     perror(msg);
 }
 
-void handle_client(const int client_sock, const char* const dir_path) {
-    struct message_header header;
-    recv(client_sock, &header, sizeof(header), 0);
-
-    if (header.version != PROTOCOL_VERSION) {
+static bool receive_send_check_protocol_version(const int client_sock) {
+    int client_protocol_version = 0;
+    recv(client_sock, &client_protocol_version, sizeof(client_protocol_version), 0);
+    const int server_protocol_version = 1;
+    const bool protocol_version_match = client_protocol_version == server_protocol_version;
+    send(client_sock, &protocol_version_match, sizeof(protocol_version_match), 0);
+    if(!protocol_version_match) {
         printf("Protocol version mismatch.\n");
         close(client_sock);
-        return;
+        return false;
     }
+    return true;
+}
 
-    if (header.type != REQUEST_FILE) {
-        printf("Unexpected message type.\n");
-        close(client_sock);
-        return;
-    }
+#define MAX_FILENAME_LENGTH 256
 
-    char filename[MAX_FILENAME_LENGTH + 1];
-    recv(client_sock, filename, header.length, 0);
-    filename[header.length] = '\0';
+static bool check_filename(
+    const int client_sock,
+    const send_info_t send_info,
+    const char* const dir_path,
+    char* filepath,
+    const size_t file_path_max_length
+) {
+    char filename[MAX_FILENAME_LENGTH];
+    recv(client_sock, filename, send_info.file_name_length, 0);
+    printf("Received filename: %s\n", filename);
+    filename[send_info.file_name_length] = '\0';
 
-    // Check if filename is valid
-    if (strchr(filename, '/') != NULL) {
-        header.type = ERROR;
-        send(client_sock, &header, sizeof(header), 0);
-        struct error_info error = {1}; // 1 for invalid filename
-        send(client_sock, &error, sizeof(error), 0);
-        close(client_sock);
-        return;
-    }
-
-    char filepath[PATH_MAX];
-    snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, filename);
+    snprintf(filepath, file_path_max_length, "%s/%s", dir_path, filename);
 
     struct stat st;
     if (stat(filepath, &st) == -1 || !S_ISREG(st.st_mode)) {
-        header.type = FILE_NOT_FOUND;
-        send(client_sock, &header, sizeof(header), 0);
+        const file_existence_t file_existence = FILE_NOT_FOUND;
+        send(client_sock, &file_existence, sizeof(file_existence), 0);
         close(client_sock);
+        return false;
+    }
+    const file_existence_t file_existence = FILE_FOUND;
+    send(client_sock, &file_existence, sizeof(file_existence), 0);
+    const file_size_t file_size = {.size = st.st_size};
+    printf("File size: %lu\n", file_size.size);
+    send(client_sock, &file_size, sizeof(file_size), 0);
+    return true;
+}
+
+static bool check_file_readiness(const int client_sock) {
+    file_receive_readiness_t file_receive_readiness;
+    recv(client_sock, &file_receive_readiness, sizeof(file_receive_readiness), 0);
+    if (file_receive_readiness == REFUSE_TO_RECEIVE) {
+        printf("Client refused to receive file.\n");
+        close(client_sock);
+        return false;
+    }
+    return true;
+}
+
+void handle_client(
+    const int client_sock,
+    const char* const dir_path
+) {
+    receive_send_check_protocol_version(client_sock);
+
+    send_info_t send_info;
+    recv(client_sock, &send_info, sizeof(send_info), 0);
+
+    char filepath[PATH_MAX];
+    if(!check_filename(client_sock, send_info, dir_path, filepath, sizeof(filepath))) {
         return;
     }
-
-    header.type = FILE_INFO;
-    send(client_sock, &header, sizeof(header), 0);
-
-    struct file_info file_info = {st.st_size};
-    send(client_sock, &file_info, sizeof(file_info), 0);
-
-    recv(client_sock, &header, sizeof(header), 0);
-    if (header.type != READY_TO_RECEIVE) {
-        close(client_sock);
+    if(!check_file_readiness(client_sock)) {
         return;
     }
 
@@ -80,7 +103,8 @@ void handle_client(const int client_sock, const char* const dir_path) {
         return;
     }
 
-    char buffer[CHUNK_SIZE];
+    const size_t chunk_size = send_info.chunk_size;
+    char buffer[chunk_size];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
         printf("Process %d read bytes: %lu\n", getpid(), bytes_read);
@@ -93,15 +117,23 @@ void handle_client(const int client_sock, const char* const dir_path) {
 
 #define MAX_BACKLOG 10
 
-int create_and_bind_socket(const IterativeServerConfig *config) {
+int create_and_bind_socket(const int port, const char* const address) {
     const int listenfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
     if (listenfd < 0)
         exit_err("socket()");
 
+    // Проблема була у тому, що після перезапуску сервера я не міг перевикористати той самий сокет.
+    // Як пояснила документація: треба явно прописати перевикористання.
+    {
+        const int optval = 1;
+        if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
+            exit_err("setsockopt(SO_REUSEADDR)");
+    }
+
     struct sockaddr_in srv_sin4 = {0};
     srv_sin4.sin_family = AF_INET;
-    srv_sin4.sin_port = htons(config->port);
-    srv_sin4.sin_addr.s_addr = inet_addr(config->address);
+    srv_sin4.sin_port = htons(port);
+    srv_sin4.sin_addr.s_addr = inet_addr(address);
 
     if (bind(listenfd, (struct sockaddr *)&srv_sin4, sizeof(srv_sin4)) < 0)
         exit_err("bind()");
@@ -109,7 +141,7 @@ int create_and_bind_socket(const IterativeServerConfig *config) {
     if (listen(listenfd, MAX_BACKLOG) < 0)
         exit_err("listen()");
 
-    printf("Server listening on %s:%d\n", config->address, config->port);
+    printf("Server listening on %s:%d\n", address, port);
     return listenfd;
 }
 
