@@ -73,13 +73,6 @@ static int create_and_bind_socket(const int port, const char* const address, con
 volatile sig_atomic_t keep_running = 1;
 static void handle_sigint(const int) { keep_running = 0; }
 
-struct OwningString {
-    char* buffer;
-    size_t size;
-};
-
-struct FilePath { struct OwningString value; };
-
 struct ClientState_Invalid {};
 struct ClientState_ReceiveProtocolVersion {
     int client_fd;
