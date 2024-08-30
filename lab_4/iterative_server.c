@@ -180,7 +180,7 @@ static ClientState construct_drop_connection(const int client_fd) {
     return new_state;
 }
 
-#define CHUNK_SIZE 4096
+#define CHUNK_SIZE 1
 
 ClientState ClientState_transition(
     const ClientState* const generic_state,
@@ -210,7 +210,9 @@ ClientState ClientState_transition(
             if(FD_ISSET(cur_state->client_fd, writefds)) {
                 const int server_protocol_version = 1;
                 const bool protocol_version_match = cur_state->client_protocol_version == server_protocol_version;
-                send(cur_state->client_fd, &protocol_version_match, sizeof(protocol_version_match), 0);
+                if(send(cur_state->client_fd, &protocol_version_match, sizeof(protocol_version_match), 0) == -1) {
+                    return construct_drop_connection(cur_state->client_fd);
+                }
                 if(!protocol_version_match) {
                     return construct_drop_connection(cur_state->client_fd);
                 }
@@ -273,7 +275,9 @@ ClientState ClientState_transition(
         case ClientState_SEND_FILE_OPERATION_POSSIBILITY: {
             const struct ClientState_SendFileOperationPossibility* const cur_state = &generic_state->value.send_file_operation_possibility;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
-                send(cur_state->client_fd, &cur_state->operation_possibility, sizeof(cur_state->operation_possibility), 0);
+                if(send(cur_state->client_fd, &cur_state->operation_possibility, sizeof(cur_state->operation_possibility), 0) == -1) {
+                    return construct_drop_connection(cur_state->client_fd);
+                }
                 if(cur_state->operation_possibility != OPERATION_POSSIBLE) {
                     return construct_drop_connection(cur_state->client_fd);
                 }
@@ -290,7 +294,9 @@ ClientState ClientState_transition(
             const struct ClientState_SendFileAndChunkSize* const cur_state = &generic_state->value.send_file_and_chunk_size;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
                 const FileAndChunkSize file_and_chunk_size = {cur_state->file_size, CHUNK_SIZE};
-                send(cur_state->client_fd, &file_and_chunk_size, sizeof(file_and_chunk_size), 0);
+                if(send(cur_state->client_fd, &file_and_chunk_size, sizeof(file_and_chunk_size), 0) == -1) {
+                    return construct_drop_connection(cur_state->client_fd);
+                }
                 ClientState next_state;
                 next_state.tag = ClientState_SEND_FILE_CHUNK;
                 next_state.value.send_file_chunk.client_fd = cur_state->client_fd;
@@ -305,8 +311,10 @@ ClientState ClientState_transition(
                 char buffer[CHUNK_SIZE];
                 size_t bytes_read;
                 while ((bytes_read = fread(buffer, 1, sizeof(buffer), cur_state->file)) > 0) {
-                    printf("Read bytes: %lu\n", bytes_read);
-                    send(cur_state->client_fd, buffer, bytes_read, 0);
+                    // printf("Read bytes: %lu\n", bytes_read);
+                    if(send(cur_state->client_fd, buffer, bytes_read, 0) == -1) {
+                        return construct_drop_connection(cur_state->client_fd);
+                    }
                 }
                 fclose(cur_state->file);
                 return construct_drop_connection(cur_state->client_fd);
@@ -397,6 +405,7 @@ static void update_sets(
 
 int main(const int argc, const char* const argv[]) {
     signal(SIGINT, handle_sigint);
+    signal(SIGPIPE, SIG_IGN);
     const IterativeServerConfig config = handle_cmd_args(argc, argv);
     const int server_fd = create_and_bind_socket(config.port, config.address, config.max_clients);
 
