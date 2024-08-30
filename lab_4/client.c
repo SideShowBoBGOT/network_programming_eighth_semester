@@ -11,7 +11,7 @@ typedef struct {
     const char *address;
     int port;
     const char *filename;
-    uint32_t max_file_size;
+    off_t max_file_size;
 } ClientConfig;
 
 static void print_config(const ClientConfig *config) {
@@ -19,7 +19,7 @@ static void print_config(const ClientConfig *config) {
     printf("  Address: %s\n", config->address);
     printf("  Port: %d\n", config->port);
     printf("  Filename: %s\n", config->filename);
-    printf("  Maximum Children: %u\n", config->max_file_size);
+    printf("  Maximum file size: %lu\n", config->max_file_size);
 }
 
 static ClientConfig handle_cmd_args(const int argc, char **argv) {
@@ -72,56 +72,51 @@ static void send_receive_check_protocol_version(const int sock) {
     }
 }
 
-static void send_filename_length(const int sock, const char* const filename) {
-    const FileNameLength send_info = {strlen(filename)};
-    send(sock, &send_info, sizeof(send_info), 0);
-    send(sock, filename, send_info.value, 0);
+static void send_filename_length_max_size(const int sock, const char* const filename, const off_t file_max_size) {
+    const size_t filename_length = strlen(filename);
+    const FileNameLengthMaxSize file_name_length_max_size = {filename_length, file_max_size};
+    send(sock, &file_name_length_max_size, sizeof(file_name_length_max_size), 0);
+    send(sock, filename, filename_length, 0);
 }
 
-static FileSize receive_file_existence_and_size(const int sock) {
-    FileExistence file_existence;
-    recv(sock, &file_existence, sizeof(file_existence), 0);
-    if (file_existence == FILE_NOT_FOUND) {
-        printf("File not found on server.\n");
-        close(sock);
-        exit(1);
+static void check_operation_possibility(const int sock) {
+    enum OperationPossibility operation_possibility;
+    recv(sock, &operation_possibility, sizeof(operation_possibility), 0);
+    switch (operation_possibility) {
+        case FILE_NOT_FOUND: {
+            exit_err("File not found");
+        }
+        case FILE_SIZE_GREATER_THAN_MAX_SIZE: {
+            exit_err("File size greater than max size");
+        }
+        case FAILED_TO_OPEN_FILE: {
+            exit_err("Failed to open file");
+        }
+        case OPERATION_POSSIBLE: break;
     }
-    FileSize file_size;
-    recv(sock, &file_size, sizeof(file_size), 0);
-    printf("File size: %lu\n", file_size.size);
-    return file_size;
 }
 
-static size_t send_receive_readiness(const int sock, const FileSize file_info, const uint32_t max_file_size) {
-    const FileReceiveReadiness readiness = file_info.size > max_file_size ? REFUSE_TO_RECEIVE : READY_TO_RECEIVE;
-    send(sock, &readiness, sizeof(readiness), 0);
-    if(readiness == REFUSE_TO_RECEIVE) {
-        printf("File size exceeds maximum allowed size.\n");
-        close(sock);
-        exit(1);
-    }
-    size_t chunk_size;
-    recv(sock, &chunk_size, sizeof(chunk_size), 0);
-    return chunk_size;
+static FileAndChunkSize receive_file_and_chunk_size(const int sock) {
+    FileAndChunkSize file_and_chunk_size;
+    recv(sock, &file_and_chunk_size, sizeof(file_and_chunk_size), 0);
+    return file_and_chunk_size;
 }
 
 static void receive_file(
     const int sock,
-    const FileSize file_info,
-    const char* const filename,
-    const size_t chunk_size
+    const FileAndChunkSize file_and_chunk_size,
+    const char* const filename
 ) {
-    // Receive and save file content
     FILE *file = fopen(filename, "wb");
     if (!file) {
         perror("Failed to open file for writing");
         close(sock);
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     uint64_t received = 0;
-    while (received < file_info.size) {
-        char buffer[chunk_size];
+    while (received < file_and_chunk_size.file_size) {
+        char buffer[file_and_chunk_size.chunk_size];
         const int bytes = recv(sock, buffer, sizeof(buffer), 0);
         if (bytes <= 0) break;
         fwrite(buffer, 1, bytes, file);
@@ -131,7 +126,7 @@ static void receive_file(
     fclose(file);
     close(sock);
 
-    if (received == file_info.size) {
+    if (received == file_and_chunk_size.file_size) {
         printf("File received successfully.\n");
     } else {
         printf("Error: Incomplete file transfer.\n");
@@ -141,10 +136,11 @@ static void receive_file(
 int main(const int argc, char *argv[]) {
     const ClientConfig config = handle_cmd_args(argc, argv);
     const int sock = create_and_connect_socket(config.port, config.address);
+
     send_receive_check_protocol_version(sock);
-    send_filename_length(sock, config.filename);
-    const FileSize file_size = receive_file_existence_and_size(sock);
-    const size_t chunk_size = send_receive_readiness(sock, file_size, config.max_file_size);
-    receive_file(sock, file_size, config.filename, chunk_size);
+    send_filename_length_max_size(sock, config.filename, config.max_file_size);
+    check_operation_possibility(sock);
+    const FileAndChunkSize file_and_chunk_size = receive_file_and_chunk_size(sock);
+    receive_file(sock, file_and_chunk_size, config.filename);
     return EXIT_SUCCESS;
 }

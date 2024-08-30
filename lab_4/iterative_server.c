@@ -99,11 +99,13 @@ struct ClientState_SendFileOperationPossibility {
     int client_fd;
     enum OperationPossibility operation_possibility;
     FILE* file;
+    off_t file_size;
 };
 
-struct ClientState_SendFileChunkSize {
+struct ClientState_SendFileAndChunkSize {
     int client_fd;
     FILE* file;
+    off_t file_size;
 };
 
 struct ClientState_SendFileChunk {
@@ -122,7 +124,7 @@ typedef enum {
     ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE,
     ClientState_RECEIVE_FILE_NAME,
     ClientState_SEND_FILE_OPERATION_POSSIBILITY,
-    ClientState_SEND_FILE_CHUNK_SIZE,
+    ClientState_SEND_FILE_AND_CHUNK_SIZE,
     ClientState_SEND_FILE_CHUNK,
     ClientState_DROP_CONNECTION
 } ClientStateTag;
@@ -136,7 +138,7 @@ typedef struct {
         struct ClientState_ReceiveFileNameLengthMaxSize receive_file_name_length;
         struct ClientState_ReceiveFileName receive_file_name;
         struct ClientState_SendFileOperationPossibility send_file_operation_possibility;
-        struct ClientState_SendFileChunkSize send_file_chunk_size;
+        struct ClientState_SendFileAndChunkSize send_file_and_chunk_size;
         struct ClientState_SendFileChunk send_file_chunk;
         struct ClientState_DropConnection drop_connection;
     } value;
@@ -157,8 +159,8 @@ int ClientState_client_fd(const ClientState* client_state) {
             return client_state->value.receive_file_name.client_fd;
         case ClientState_SEND_FILE_OPERATION_POSSIBILITY:
             return client_state->value.send_file_operation_possibility.client_fd;
-        case ClientState_SEND_FILE_CHUNK_SIZE:
-            return client_state->value.send_file_chunk_size.client_fd;
+        case ClientState_SEND_FILE_AND_CHUNK_SIZE:
+            return client_state->value.send_file_and_chunk_size.client_fd;
         case ClientState_SEND_FILE_CHUNK:
             return client_state->value.send_file_chunk.client_fd;
         case ClientState_DROP_CONNECTION:
@@ -263,6 +265,7 @@ ClientState ClientState_transition(
                         next_state.value.send_file_operation_possibility.operation_possibility = FAILED_TO_OPEN_FILE;
                     }
                 }
+                next_state.value.send_file_operation_possibility.file_size = st.st_size;
                 return next_state;
             }
             return *generic_state;
@@ -275,18 +278,19 @@ ClientState ClientState_transition(
                     return construct_drop_connection(cur_state->client_fd);
                 }
                 ClientState next_state;
-                next_state.tag = ClientState_SEND_FILE_CHUNK_SIZE;
-                next_state.value.send_file_chunk_size.client_fd = cur_state->client_fd;
-                next_state.value.send_file_chunk_size.file = cur_state->file;
+                next_state.tag = ClientState_SEND_FILE_AND_CHUNK_SIZE;
+                next_state.value.send_file_and_chunk_size.client_fd = cur_state->client_fd;
+                next_state.value.send_file_and_chunk_size.file = cur_state->file;
+                next_state.value.send_file_and_chunk_size.file_size = cur_state->file_size;
                 return next_state;
             }
             return *generic_state;
         }
-        case ClientState_SEND_FILE_CHUNK_SIZE: {
-            const struct ClientState_SendFileChunk* const cur_state = &generic_state->value.send_file_chunk;
+        case ClientState_SEND_FILE_AND_CHUNK_SIZE: {
+            const struct ClientState_SendFileAndChunkSize* const cur_state = &generic_state->value.send_file_and_chunk_size;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
-                const size_t chunk_size = CHUNK_SIZE;
-                send(cur_state->client_fd, &chunk_size, sizeof(chunk_size), 0);
+                const FileAndChunkSize file_and_chunk_size = {cur_state->file_size, CHUNK_SIZE};
+                send(cur_state->client_fd, &file_and_chunk_size, sizeof(file_and_chunk_size), 0);
                 ClientState next_state;
                 next_state.tag = ClientState_SEND_FILE_CHUNK;
                 next_state.value.send_file_chunk.client_fd = cur_state->client_fd;
@@ -316,10 +320,9 @@ ClientState ClientState_transition(
             next_state.tag = ClientStateTag_INVALID;
             return next_state;
         }
+        default:
+            __builtin_unreachable();
     }
-
-    __builtin_unreachable();
-    return *generic_state;
 }
 
 int set_read_write_max_fds(

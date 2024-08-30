@@ -7,6 +7,11 @@ typedef struct {
     off_t file_max_size;
 } FileNameLengthMaxSize;
 
+typedef struct {
+    off_t file_size;
+    size_t chunk_size;
+} FileAndChunkSize;
+
 enum OperationPossibility {
     OPERATION_POSSIBLE,
     FILE_NOT_FOUND,
