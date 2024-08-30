@@ -1,6 +1,6 @@
 import os
-with open('./lab_3/code.txt', 'w') as output:
-    for root, dirs, files in os.walk("./lab_3"):
+with open('./lab_4/code.txt', 'w') as output:
+    for root, dirs, files in os.walk("./lab_4"):
         for file in files:
             if file.endswith('.c') or file.endswith('.h') or file.endswith('CMakeLists.txt'):
                 path = root + os.sep + file
