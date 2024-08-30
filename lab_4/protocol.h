@@ -13,7 +13,7 @@ typedef enum {
 } FileExistence;
 
 typedef struct {
-    uint16_t file_name_length;
+    uint8_t value;
 } FileNameLength;
 
 typedef struct {

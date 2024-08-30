@@ -75,7 +75,7 @@ static void send_receive_check_protocol_version(const int sock) {
 static void send_filename_length(const int sock, const char* const filename) {
     const FileNameLength send_info = {strlen(filename)};
     send(sock, &send_info, sizeof(send_info), 0);
-    send(sock, filename, send_info.file_name_length, 0);
+    send(sock, filename, send_info.value, 0);
 }
 
 static FileSize receive_file_existence_and_size(const int sock) {

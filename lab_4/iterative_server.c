@@ -180,27 +180,66 @@ static int create_and_bind_socket(const int port, const char* const address, con
 volatile sig_atomic_t keep_running = 1;
 static void handle_sigint(const int) { keep_running = 0; }
 
-typedef struct {} ClientState_Invalid;
-typedef struct { int client_fd; } ClientState_ReceiveProtocolVersion;
-typedef struct { int client_fd; } ClientState_SendMatchProtocolVersion;
-typedef struct { int client_fd; } ClientState_ReceiveFileNameLength;
-typedef struct { int client_fd; } ClientState_SendFileExistence;
+struct OwningString {
+    char* buffer = NULL;
+    size_t size = 0;
+};
+
+struct FilePath { struct OwningString value; };
+
+struct ClientState_Invalid {};
+struct ClientState_ReceiveProtocolVersion {
+    int client_fd;
+};
+struct ClientState_SendMatchProtocolVersion {
+    int client_fd;
+    int client_protocol_version;
+};
+struct ClientState_ReceiveFileNameLength {
+    int client_fd;
+} ;
+struct ClientState_ReceiveFileName {
+    int client_fd;
+    FileNameLength file_name_length;
+} ;
+struct ClientState_SendFileExistence {
+    int client_fd;
+    struct FilePath file_name;
+};
+struct ClientState_SendFileSize {
+    int client_fd;
+    struct FilePath file_name;
+};
+struct ClientState_SendFileChunk {
+    int client_fd;
+    struct FilePath file_name;
+};
+struct ClientState_DropConnection {
+    int client_fd;
+};
 
 typedef enum {
     ClientStateTag_INVALID,
     ClientState_RECEIVE_PROTOCOL_VERSION,
     ClientState_SEND_MATCH_PROTOCOL_VERSION,
-    ClientState_SEND_FILE_NAME_LENGTH,
-    ClientState_SEND_FILE_EXISTENCE,
+    ClientState_RECEIVE_FILE_NAME_LENGTH,
+    ClientState_RECEIVE_FILE_NAME,
 
+    ClientState_SEND_FILE_EXISTENCE,
+    ClientState_DROP_CONNECTION
 } ClientStateTag;
 
 typedef struct {
     ClientStateTag tag;
     union {
-        ClientState_Invalid invalid;
-        ClientState_ReceiveProtocolVersion receive_protocol_version;
-        ClientState_SendMatchProtocolVersion send_match_protocol_version;
+        struct ClientState_Invalid invalid;
+        struct ClientState_ReceiveProtocolVersion receive_protocol_version;
+        struct ClientState_SendMatchProtocolVersion send_match_protocol_version;
+        struct ClientState_ReceiveFileNameLength receive_file_name_length;
+        struct ClientState_ReceiveFileName receive_file_name;
+        struct ClientState_SendFileExistence send_file_existence;
+
+        struct ClientState_DropConnection drop_connection;
     } value;
 } ClientState;
 
@@ -214,24 +253,104 @@ int ClientState_client_fd(const ClientState* client_state) {
     }
 }
 
+#define NAME_MAX_WITHOUT_NULL_TERMINATOR NAME_MAX
+#define PATH_MAX_WITHOUT_NULL_TERMINATOR PATH_MAX
+
 ClientState ClientState_transition(
     const ClientState* const generic_state,
     const fd_set* const readfds,
-    const fd_set* const writefds
+    const fd_set* const writefds,
+    const char* const dir_path
 ) {
     switch (generic_state->tag) {
         case ClientStateTag_INVALID: return *generic_state;
         case ClientState_RECEIVE_PROTOCOL_VERSION: {
-            const ClientState_ReceiveProtocolVersion* cur_state = &generic_state->value.receive_protocol_version;
+            const struct ClientState_ReceiveProtocolVersion* const cur_state = &generic_state->value.receive_protocol_version;
             if(FD_ISSET(cur_state->client_fd, readfds)) {
-                int client_protocol_version = 0;
-                recv(cur_state->client_fd, &client_protocol_version, sizeof(client_protocol_version), 0);
                 ClientState next_state;
                 next_state.tag = ClientState_SEND_MATCH_PROTOCOL_VERSION;
                 next_state.value.send_match_protocol_version.client_fd = cur_state->client_fd;
+                recv(cur_state->client_fd,
+                    &next_state.value.send_match_protocol_version.client_protocol_version,
+                    sizeof(next_state.value.send_match_protocol_version.client_protocol_version),
+                    0
+                );
                 return next_state;
             }
             return *generic_state;
+        }
+        case ClientState_SEND_MATCH_PROTOCOL_VERSION: {
+            const struct ClientState_SendMatchProtocolVersion* const cur_state = &generic_state->value.send_match_protocol_version;
+            if(FD_ISSET(cur_state->client_fd, writefds)) {
+                const int server_protocol_version = 1;
+                const bool protocol_version_match = cur_state->client_protocol_version == server_protocol_version;
+                send(cur_state->client_fd, &protocol_version_match, sizeof(protocol_version_match), 0);
+                ClientState next_state;
+                if(!protocol_version_match) {
+                    next_state.tag = ClientState_DROP_CONNECTION;
+                    next_state.value.drop_connection.client_fd = cur_state->client_fd;
+                    return next_state;
+                }
+                next_state.tag = ClientState_RECEIVE_FILE_NAME_LENGTH;
+                next_state.value.receive_file_name_length.client_fd = cur_state->client_fd;
+                return next_state;
+            }
+            return *generic_state;
+        }
+        case ClientState_RECEIVE_FILE_NAME_LENGTH: {
+            const struct ClientState_ReceiveFileNameLength* const cur_state = &generic_state->value.receive_file_name_length;
+            if(FD_ISSET(cur_state->client_fd, readfds)) {
+                ClientState next_state;
+                next_state.tag = ClientState_RECEIVE_FILE_NAME;
+                next_state.value.receive_file_name.client_fd = cur_state->client_fd;
+                recv(
+                    cur_state->client_fd,
+                    &next_state.value.receive_file_name.file_name_length,
+                    sizeof(next_state.value.receive_file_name.file_name_length),
+                    0
+                );
+                return next_state;
+            }
+            return *generic_state;
+        }
+        case ClientState_RECEIVE_FILE_NAME: {
+            const struct ClientState_ReceiveFileName* const cur_state = &generic_state->value.receive_file_name;
+            if(FD_ISSET(cur_state->client_fd, readfds)) {
+                char name_buffer[NAME_MAX_WITHOUT_NULL_TERMINATOR + 1] = {0};
+                recv(cur_state->client_fd, name_buffer, sizeof(name_buffer), 0);
+                name_buffer[NAME_MAX_WITHOUT_NULL_TERMINATOR] = '\0';
+
+                char path_buffer[PATH_MAX_WITHOUT_NULL_TERMINATOR] = {0};
+                snprintf(path_buffer, PATH_MAX_WITHOUT_NULL_TERMINATOR, "%s/%s", dir_path, name_buffer);
+
+                const size_t path_length = strlen(path_buffer);
+                void* buffer = malloc(path_length + 1);
+                strncpy(buffer, path_buffer, path_length);
+
+                struct FilePath file_path = {.value = {buffer, path_length}};
+
+                ClientState next_state;
+                next_state.tag = ClientState_SEND_FILE_EXISTENCE;
+                next_state.value.send_file_existence.client_fd = cur_state->client_fd;
+                next_state.value.send_file_existence.file_name = file_path;
+
+                return next_state;
+            }
+            return *generic_state;
+        }
+        case ClientState_SEND_FILE_EXISTENCE: {
+            const struct ClientState_SendFileExistence* const cur_state = &generic_state->value.send_file_existence;
+            if(FD_ISSET(cur_state->client_fd, writefds)) {
+                struct stat st;
+                //     if (stat(filepath, &st) == -1 || !S_ISREG(st.st_mode)) {
+                //         const file_existence_t file_existence = FILE_NOT_FOUND;
+                //         send(client_sock, &file_existence, sizeof(file_existence), 0);
+                //         close(client_sock);
+                //         return false;
+                //     }
+                //     const file_existence_t file_existence = FILE_FOUND;
+                //     send(client_sock, &file_existence, sizeof(file_existence), 0);
+            }
         }
     }
 }
