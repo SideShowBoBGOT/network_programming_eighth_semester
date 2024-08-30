@@ -180,7 +180,7 @@ static ClientState construct_drop_connection(const int client_fd) {
     return new_state;
 }
 
-#define CHUNK_SIZE 1
+#define CHUNK_SIZE 4096
 
 ClientState ClientState_transition(
     const ClientState* const generic_state,
@@ -193,6 +193,8 @@ ClientState ClientState_transition(
         case ClientState_RECEIVE_PROTOCOL_VERSION: {
             const struct ClientState_ReceiveProtocolVersion* const cur_state = &generic_state->value.receive_protocol_version;
             if(FD_ISSET(cur_state->client_fd, readfds)) {
+                printf("Client fd %d is at ClientState_RECEIVE_PROTOCOL_VERSION\n", cur_state->client_fd);
+
                 ClientState next_state;
                 next_state.tag = ClientState_SEND_MATCH_PROTOCOL_VERSION;
                 next_state.value.send_match_protocol_version.client_fd = cur_state->client_fd;
@@ -208,6 +210,8 @@ ClientState ClientState_transition(
         case ClientState_SEND_MATCH_PROTOCOL_VERSION: {
             const struct ClientState_SendMatchProtocolVersion* const cur_state = &generic_state->value.send_match_protocol_version;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
+                printf("Client fd %d is at ClientState_SEND_MATCH_PROTOCOL_VERSION\n", cur_state->client_fd);
+
                 const int server_protocol_version = 1;
                 const bool protocol_version_match = cur_state->client_protocol_version == server_protocol_version;
                 if(send(cur_state->client_fd, &protocol_version_match, sizeof(protocol_version_match), 0) == -1) {
@@ -226,10 +230,11 @@ ClientState ClientState_transition(
         case ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE: {
             const struct ClientState_ReceiveFileNameLengthMaxSize* const cur_state = &generic_state->value.receive_file_name_length;
             if(FD_ISSET(cur_state->client_fd, readfds)) {
+                printf("Client fd %d is at ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE\n", cur_state->client_fd);
+
                 ClientState next_state;
                 next_state.tag = ClientState_RECEIVE_FILE_NAME;
                 next_state.value.receive_file_name.client_fd = cur_state->client_fd;
-
                 recv(
                     cur_state->client_fd,
                     &next_state.value.receive_file_name.file_name_length_max_size,
@@ -243,6 +248,8 @@ ClientState ClientState_transition(
         case ClientState_RECEIVE_FILE_NAME: {
             const struct ClientState_ReceiveFileName* const cur_state = &generic_state->value.receive_file_name;
             if(FD_ISSET(cur_state->client_fd, readfds)) {
+                printf("Client fd %d is at ClientState_RECEIVE_FILE_NAME\n", cur_state->client_fd);
+
                 char name_buffer[NAME_MAX_WITHOUT_NULL_TERMINATOR + 1] = {0};
                 recv(cur_state->client_fd, name_buffer, sizeof(name_buffer), 0);
                 name_buffer[NAME_MAX_WITHOUT_NULL_TERMINATOR] = '\0';
@@ -275,6 +282,8 @@ ClientState ClientState_transition(
         case ClientState_SEND_FILE_OPERATION_POSSIBILITY: {
             const struct ClientState_SendFileOperationPossibility* const cur_state = &generic_state->value.send_file_operation_possibility;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
+                printf("Client fd %d is at ClientState_SEND_FILE_OPERATION_POSSIBILITY\n", cur_state->client_fd);
+
                 if(send(cur_state->client_fd, &cur_state->operation_possibility, sizeof(cur_state->operation_possibility), 0) == -1) {
                     return construct_drop_connection(cur_state->client_fd);
                 }
@@ -293,6 +302,8 @@ ClientState ClientState_transition(
         case ClientState_SEND_FILE_AND_CHUNK_SIZE: {
             const struct ClientState_SendFileAndChunkSize* const cur_state = &generic_state->value.send_file_and_chunk_size;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
+                printf("Client fd %d is at ClientState_SEND_FILE_AND_CHUNK_SIZE\n", cur_state->client_fd);
+
                 const FileAndChunkSize file_and_chunk_size = {cur_state->file_size, CHUNK_SIZE};
                 if(send(cur_state->client_fd, &file_and_chunk_size, sizeof(file_and_chunk_size), 0) == -1) {
                     return construct_drop_connection(cur_state->client_fd);
@@ -308,6 +319,8 @@ ClientState ClientState_transition(
         case ClientState_SEND_FILE_CHUNK: {
             const struct ClientState_SendFileChunk* const cur_state = &generic_state->value.send_file_chunk;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
+                printf("Client fd %d is at ClientState_SEND_FILE_CHUNK\n", cur_state->client_fd);
+
                 char buffer[CHUNK_SIZE];
                 size_t bytes_read;
                 while ((bytes_read = fread(buffer, 1, sizeof(buffer), cur_state->file)) > 0) {
@@ -317,12 +330,16 @@ ClientState ClientState_transition(
                     }
                 }
                 fclose(cur_state->file);
+
+                printf("Client fd %d sent file successfuly\n", cur_state->client_fd);
                 return construct_drop_connection(cur_state->client_fd);
             }
             return *generic_state;
         }
         case ClientState_DROP_CONNECTION: {
             const struct ClientState_DropConnection* const cur_state = &generic_state->value.drop_connection;
+            printf("Client fd %d is at ClientState_DROP_CONNECTION\n", cur_state->client_fd);
+
             close(cur_state->client_fd);
             ClientState next_state;
             next_state.tag = ClientStateTag_INVALID;
