@@ -114,7 +114,7 @@ static void receive_file(
         exit(EXIT_FAILURE);
     }
 
-    uint64_t received = 0;
+    off_t received = 0;
     while (received < file_and_chunk_size.file_size) {
         char buffer[file_and_chunk_size.chunk_size];
         const int bytes = recv(sock, buffer, sizeof(buffer), 0);
