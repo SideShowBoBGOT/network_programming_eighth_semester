@@ -209,6 +209,7 @@ struct ClientState_SendFileExistence {
 struct ClientState_SendFileSize {
     int client_fd;
     struct FilePath file_name;
+    off_t file_size;
 };
 struct ClientState_SendFileChunk {
     int client_fd;
@@ -224,8 +225,10 @@ typedef enum {
     ClientState_SEND_MATCH_PROTOCOL_VERSION,
     ClientState_RECEIVE_FILE_NAME_LENGTH,
     ClientState_RECEIVE_FILE_NAME,
-
     ClientState_SEND_FILE_EXISTENCE,
+    ClientState_SEND_FILE_SIZE,
+
+
     ClientState_DROP_CONNECTION
 } ClientStateTag;
 
@@ -238,7 +241,7 @@ typedef struct {
         struct ClientState_ReceiveFileNameLength receive_file_name_length;
         struct ClientState_ReceiveFileName receive_file_name;
         struct ClientState_SendFileExistence send_file_existence;
-
+        struct ClientState_SendFileSize send_file_size;
         struct ClientState_DropConnection drop_connection;
     } value;
 } ClientState;
@@ -342,14 +345,20 @@ ClientState ClientState_transition(
             const struct ClientState_SendFileExistence* const cur_state = &generic_state->value.send_file_existence;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
                 struct stat st;
-                //     if (stat(filepath, &st) == -1 || !S_ISREG(st.st_mode)) {
-                //         const file_existence_t file_existence = FILE_NOT_FOUND;
-                //         send(client_sock, &file_existence, sizeof(file_existence), 0);
-                //         close(client_sock);
-                //         return false;
-                //     }
-                //     const file_existence_t file_existence = FILE_FOUND;
-                //     send(client_sock, &file_existence, sizeof(file_existence), 0);
+                bool is_valid = stat(cur_state->file_name.value.buffer, &st) == -1 || !S_ISREG(st.st_mode);
+                send(cur_state->client_fd, &is_valid, sizeof(is_valid), 0);
+                ClientState next_state;
+                if(!is_valid) {
+                    next_state.tag = ClientState_DROP_CONNECTION;
+                    next_state.value.drop_connection.client_fd = cur_state->client_fd;
+                    return next_state;
+                }
+                next_state.tag = ClientState_SEND_FILE_SIZE;
+                next_state.value.send_file_size.client_fd = cur_state->client_fd;
+                next_state.value.send_file_size.file_name = cur_state->file_name;
+                next_state.value.send_file_size.file_size = st.st_size;
+
+                return next_state;
             }
         }
     }
