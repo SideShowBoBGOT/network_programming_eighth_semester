@@ -21,113 +21,6 @@ typedef struct {
     uint32_t max_clients;
 } IterativeServerConfig;
 
-
-
-// static bool receive_send_check_protocol_version(const int client_sock) {
-//     int client_protocol_version = 0;
-//     recv(client_sock, &client_protocol_version, sizeof(client_protocol_version), 0);
-//     const int server_protocol_version = 1;
-//     const bool protocol_version_match = client_protocol_version == server_protocol_version;
-//     send(client_sock, &protocol_version_match, sizeof(protocol_version_match), 0);
-//     if(!protocol_version_match) {
-//         printf("Protocol version mismatch.\n");
-//         close(client_sock);
-//         return false;
-//     }
-//     return true;
-// }
-//
-// #define MAX_FILENAME_LENGTH 256
-//
-// static bool check_filename(
-//     const int client_sock,
-//     const send_info_t send_info,
-//     const char* const dir_path,
-//     char* filepath,
-//     const size_t file_path_max_length
-// ) {
-//     char filename[MAX_FILENAME_LENGTH];
-//     recv(client_sock, filename, send_info.file_name_length, 0);
-//     printf("Received filename: %s\n", filename);
-//     filename[send_info.file_name_length] = '\0';
-//
-//     snprintf(filepath, file_path_max_length, "%s/%s", dir_path, filename);
-//
-//     struct stat st;
-//     if (stat(filepath, &st) == -1 || !S_ISREG(st.st_mode)) {
-//         const file_existence_t file_existence = FILE_NOT_FOUND;
-//         send(client_sock, &file_existence, sizeof(file_existence), 0);
-//         close(client_sock);
-//         return false;
-//     }
-//     const file_existence_t file_existence = FILE_FOUND;
-//     send(client_sock, &file_existence, sizeof(file_existence), 0);
-//     const file_size_t file_size = {.size = st.st_size};
-//     printf("File size: %lu\n", file_size.size);
-//     send(client_sock, &file_size, sizeof(file_size), 0);
-//     return true;
-// }
-//
-// const int CHUNK_SIZE = 4096;
-//
-// static bool check_file_readiness(const int client_sock) {
-//     file_receive_readiness_t file_receive_readiness;
-//     recv(client_sock, &file_receive_readiness, sizeof(file_receive_readiness), 0);
-//     if (file_receive_readiness == REFUSE_TO_RECEIVE) {
-//         printf("Client refused to receive file.\n");
-//         close(client_sock);
-//         return false;
-//     }
-//     send(client_sock, &CHUNK_SIZE, sizeof(CHUNK_SIZE), 0);
-//     return true;
-// }
-//
-// static void handle_client(
-//     const int client_sock,
-//     const char* const dir_path
-// ) {
-//     receive_send_check_protocol_version(client_sock);
-//
-//     send_info_t send_info;
-//     recv(client_sock, &send_info, sizeof(send_info), 0);
-//
-//     char filepath[PATH_MAX];
-//     if(!check_filename(client_sock, send_info, dir_path, filepath, sizeof(filepath))) {
-//         return;
-//     }
-//     if(!check_file_readiness(client_sock)) {
-//         return;
-//     }
-//
-//     FILE *file = fopen(filepath, "rb");
-//     if (!file) {
-//         perror("Failed to open file");
-//         close(client_sock);
-//         return;
-//     }
-//
-//     char buffer[CHUNK_SIZE];
-//     size_t bytes_read;
-//     while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-//         // printf("Process %d read bytes: %lu\n", getpid(), bytes_read);
-//         send(client_sock, buffer, bytes_read, 0);
-//     }
-//
-//     fclose(file);
-//     close(client_sock);
-// }
-//
-static int accept_connection(const int listenfd) {
-    struct sockaddr_in cln_sin4;
-    socklen_t addrlen = sizeof(cln_sin4);
-    const int conn_fd = accept(listenfd, (struct sockaddr *)&cln_sin4, &addrlen);
-    if (conn_fd < 0) {
-        return -1;
-    }
-    printf("New connection from %s:%d\n", inet_ntoa(cln_sin4.sin_addr), ntohs(cln_sin4.sin_port));
-    return conn_fd;
-}
-
 static void print_config(const IterativeServerConfig *config) {
     printf("Server Configuration:\n");
     printf("  Address: %s\n", config->address);
@@ -136,7 +29,7 @@ static void print_config(const IterativeServerConfig *config) {
     printf("  Max clients: %u\n", config->max_clients);
 }
 
-static IterativeServerConfig handle_cmd_args(const int argc, char **argv) {
+static IterativeServerConfig handle_cmd_args(const int argc, const char * const * const argv) {
     if (argc != 5) {
         fprintf(stderr, "Usage: %s <server_address> <server_port> <directory_path>\n", argv[0]);
         exit(EXIT_FAILURE);
@@ -159,7 +52,7 @@ static int create_and_bind_socket(const int port, const char* const address, con
     srv_sin4.sin_family = AF_INET;
     srv_sin4.sin_port = htons(port);
 
-    const int listenfd = socket(srv_sin4.sin_family, SOCK_STREAM, IPPROTO_TCP);
+    const int listenfd = socket(srv_sin4.sin_family, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
     if (listenfd < 0)
         exit_err("socket()");
 
@@ -181,8 +74,8 @@ volatile sig_atomic_t keep_running = 1;
 static void handle_sigint(const int) { keep_running = 0; }
 
 struct OwningString {
-    char* buffer = NULL;
-    size_t size = 0;
+    char* buffer;
+    size_t size;
 };
 
 struct FilePath { struct OwningString value; };
@@ -204,14 +97,20 @@ struct ClientState_ReceiveFileName {
 };
 struct ClientState_SendFileOperationPossibility {
     int client_fd;
-    off_t file_max_size;
-    struct FilePath file_name;
+    enum OperationPossibility operation_possibility;
+    FILE* file;
+};
+
+struct ClientState_SendFileChunkSize {
+    int client_fd;
+    FILE* file;
 };
 
 struct ClientState_SendFileChunk {
     int client_fd;
     FILE* file;
 };
+
 struct ClientState_DropConnection {
     int client_fd;
 };
@@ -223,6 +122,7 @@ typedef enum {
     ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE,
     ClientState_RECEIVE_FILE_NAME,
     ClientState_SEND_FILE_OPERATION_POSSIBILITY,
+    ClientState_SEND_FILE_CHUNK_SIZE,
     ClientState_SEND_FILE_CHUNK,
     ClientState_DROP_CONNECTION
 } ClientStateTag;
@@ -236,7 +136,7 @@ typedef struct {
         struct ClientState_ReceiveFileNameLengthMaxSize receive_file_name_length;
         struct ClientState_ReceiveFileName receive_file_name;
         struct ClientState_SendFileOperationPossibility send_file_operation_possibility;
-
+        struct ClientState_SendFileChunkSize send_file_chunk_size;
         struct ClientState_SendFileChunk send_file_chunk;
         struct ClientState_DropConnection drop_connection;
     } value;
@@ -247,8 +147,24 @@ int ClientState_client_fd(const ClientState* client_state) {
         case ClientStateTag_INVALID: {
             exit_err("Can not get client_fd from INVALID state");
         }
-        case ClientState_RECEIVE_PROTOCOL_VERSION: return client_state->value.receive_protocol_version.client_fd;
-        case ClientState_SEND_MATCH_PROTOCOL_VERSION: return client_state->value.send_match_protocol_version.client_fd;
+        case ClientState_RECEIVE_PROTOCOL_VERSION:
+            return client_state->value.receive_protocol_version.client_fd;
+        case ClientState_SEND_MATCH_PROTOCOL_VERSION:
+            return client_state->value.send_match_protocol_version.client_fd;
+        case ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE:
+            return client_state->value.receive_file_name_length.client_fd;
+        case ClientState_RECEIVE_FILE_NAME:
+            return client_state->value.receive_file_name.client_fd;
+        case ClientState_SEND_FILE_OPERATION_POSSIBILITY:
+            return client_state->value.send_file_operation_possibility.client_fd;
+        case ClientState_SEND_FILE_CHUNK_SIZE:
+            return client_state->value.send_file_chunk_size.client_fd;
+        case ClientState_SEND_FILE_CHUNK:
+            return client_state->value.send_file_chunk.client_fd;
+        case ClientState_DROP_CONNECTION:
+            return client_state->value.drop_connection.client_fd;
+        default:
+            __builtin_unreachable();
     }
 }
 
@@ -261,6 +177,8 @@ static ClientState construct_drop_connection(const int client_fd) {
     new_state.value.drop_connection.client_fd = client_fd;
     return new_state;
 }
+
+#define CHUNK_SIZE 4096
 
 ClientState ClientState_transition(
     const ClientState* const generic_state,
@@ -328,18 +246,23 @@ ClientState ClientState_transition(
                 char path_buffer[PATH_MAX_WITHOUT_NULL_TERMINATOR] = {0};
                 snprintf(path_buffer, PATH_MAX_WITHOUT_NULL_TERMINATOR, "%s/%s", dir_path, name_buffer);
 
-                const size_t path_length = strlen(path_buffer);
-                void* buffer = malloc(path_length + 1);
-                strncpy(buffer, path_buffer, path_length);
-
-                struct FilePath file_path = {.value = {buffer, path_length}};
-
                 ClientState next_state;
                 next_state.tag = ClientState_SEND_FILE_OPERATION_POSSIBILITY;
                 next_state.value.send_file_operation_possibility.client_fd = cur_state->client_fd;
-                next_state.value.send_file_operation_possibility.file_max_size = cur_state->file_name_length_max_size.file_max_size;
-                next_state.value.send_file_operation_possibility.file_name = file_path;
+                next_state.value.send_file_operation_possibility.file = NULL;
+                next_state.value.send_file_operation_possibility.operation_possibility = OPERATION_POSSIBLE;
 
+                struct stat st;
+                if(stat(path_buffer, &st) == -1 || !S_ISREG(st.st_mode)) {
+                    next_state.value.send_file_operation_possibility.operation_possibility = FILE_NOT_FOUND;
+                } else if(cur_state->file_name_length_max_size.file_max_size < st.st_size) {
+                    next_state.value.send_file_operation_possibility.operation_possibility = FILE_SIZE_GREATER_THAN_MAX_SIZE;
+                } else {
+                    next_state.value.send_file_operation_possibility.file = fopen(path_buffer, "rb");
+                    if(!next_state.value.send_file_operation_possibility.file) {
+                        next_state.value.send_file_operation_possibility.operation_possibility = FAILED_TO_OPEN_FILE;
+                    }
+                }
                 return next_state;
             }
             return *generic_state;
@@ -347,30 +270,27 @@ ClientState ClientState_transition(
         case ClientState_SEND_FILE_OPERATION_POSSIBILITY: {
             const struct ClientState_SendFileOperationPossibility* const cur_state = &generic_state->value.send_file_operation_possibility;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
-                struct stat st;
-                {
-                    const bool is_found = stat(cur_state->file_name.value.buffer, &st) == -1 || !S_ISREG(st.st_mode);
-                    if(!is_found) {
-                        const enum OperationPossibility code = OperationPossibility::FILE_NOT_FOUND;
-                        send(cur_state->client_fd, &code, sizeof(code), 0);
-                        return construct_drop_connection(cur_state->client_fd);
-                    }
-                }
-                if(cur_state->file_max_size < st.st_size) {
-                    const enum OperationPossibility code = OperationPossibility::FILE_SIZE_GREATER_THAN_MAX_SIZE;
-                    send(cur_state->client_fd, &code, sizeof(code), 0);
-                    return construct_drop_connection(cur_state->client_fd);
-                }
-                FILE* file = fopen(cur_state->file_name.value.buffer, "rb");
-                if(!file) {
-                    const enum OperationPossibility code = OperationPossibility::FAILED_TO_OPEN_FILE;
-                    send(cur_state->client_fd, &code, sizeof(code), 0);
+                send(cur_state->client_fd, &cur_state->operation_possibility, sizeof(cur_state->operation_possibility), 0);
+                if(cur_state->operation_possibility != OPERATION_POSSIBLE) {
                     return construct_drop_connection(cur_state->client_fd);
                 }
                 ClientState next_state;
+                next_state.tag = ClientState_SEND_FILE_CHUNK_SIZE;
+                next_state.value.send_file_chunk_size.client_fd = cur_state->client_fd;
+                next_state.value.send_file_chunk_size.file = cur_state->file;
+                return next_state;
+            }
+            return *generic_state;
+        }
+        case ClientState_SEND_FILE_CHUNK_SIZE: {
+            const struct ClientState_SendFileChunk* const cur_state = &generic_state->value.send_file_chunk;
+            if(FD_ISSET(cur_state->client_fd, writefds)) {
+                const size_t chunk_size = CHUNK_SIZE;
+                send(cur_state->client_fd, &chunk_size, sizeof(chunk_size), 0);
+                ClientState next_state;
                 next_state.tag = ClientState_SEND_FILE_CHUNK;
                 next_state.value.send_file_chunk.client_fd = cur_state->client_fd;
-                next_state.value.send_file_chunk.file = file;
+                next_state.value.send_file_chunk.file = cur_state->file;
                 return next_state;
             }
             return *generic_state;
@@ -378,12 +298,14 @@ ClientState ClientState_transition(
         case ClientState_SEND_FILE_CHUNK: {
             const struct ClientState_SendFileChunk* const cur_state = &generic_state->value.send_file_chunk;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
-                send(cur_state->client_fd, &cur_state->file_size, sizeof(cur_state->file_size), 0);
-                ClientState next_state;
-                next_state.tag = ClientState_RECEIVE_FILE_SIZE_NEGOTIATION;
-                next_state.value.receive_file_size_negotiation.client_fd = cur_state->client_fd;
-                next_state.value.receive_file_size_negotiation.file_name = cur_state->file_name;
-                return next_state;
+                char buffer[CHUNK_SIZE];
+                size_t bytes_read;
+                while ((bytes_read = fread(buffer, 1, sizeof(buffer), cur_state->file)) > 0) {
+                    printf("Read bytes: %lu\n", bytes_read);
+                    send(cur_state->client_fd, buffer, bytes_read, 0);
+                }
+                fclose(cur_state->file);
+                return construct_drop_connection(cur_state->client_fd);
             }
             return *generic_state;
         }
@@ -394,8 +316,10 @@ ClientState ClientState_transition(
             next_state.tag = ClientStateTag_INVALID;
             return next_state;
         }
-
     }
+
+    __builtin_unreachable();
+    return *generic_state;
 }
 
 int set_read_write_max_fds(
@@ -409,7 +333,7 @@ int set_read_write_max_fds(
     FD_ZERO(writefds);
     FD_SET(serverfd, readfds);
     int max_sd = serverfd;
-    for (int i = 0; i < client_sockets_size; ++i) {
+    for (size_t i = 0; i < client_sockets_size; ++i) {
         const ClientState* state = &client_states[i];
         if (state->tag != ClientStateTag_INVALID) {
             const int client_fd = ClientState_client_fd(state);
@@ -433,18 +357,21 @@ static void check_accept_connection(
         struct sockaddr_in address;
         socklen_t addr_len = sizeof(address);
         const int client_fd = accept(serverfd, (struct sockaddr *)&address, &addr_len);
-        if (client_fd < 0) {
-            exit_err("accept()");
+        if (client_fd == -1) {
+            if(errno != EAGAIN && errno != EWOULDBLOCK) {
+                exit_err("accept()");
+            }
+            return;
         }
 
         printf("New connection, socket fd is %d, IP is: %s, port: %d\n",
                client_fd, inet_ntoa(address.sin_addr), ntohs(address.sin_port));
 
-        for (int i = 0; i < client_states_size; i++) {
+        for (size_t i = 0; i < client_states_size; ++i) {
             if (client_states[i].tag == ClientStateTag_INVALID) {
                 client_states[i].tag = ClientState_RECEIVE_PROTOCOL_VERSION;
                 client_states[i].value.receive_protocol_version.client_fd = client_fd;
-                printf("Adding to list of sockets as %d\n", i);
+                printf("Adding to list of sockets as %lu\n", i);
                 break;
             }
         }
@@ -465,7 +392,7 @@ static void update_sets(
     }
 }
 
-int main(const int argc, const char *argv[]) {
+int main(const int argc, const char* const argv[]) {
     signal(SIGINT, handle_sigint);
     const IterativeServerConfig config = handle_cmd_args(argc, argv);
     const int server_fd = create_and_bind_socket(config.port, config.address, config.max_clients);
@@ -473,7 +400,7 @@ int main(const int argc, const char *argv[]) {
     fd_set readfds;
     fd_set writefds;
     ClientState client_sockets[config.max_clients];
-    for (int i = 0; i < config.max_clients; ++i) {
+    for (size_t i = 0; i < config.max_clients; ++i) {
         client_sockets[i].tag = ClientStateTag_INVALID;
     }
 
@@ -481,13 +408,12 @@ int main(const int argc, const char *argv[]) {
         update_sets(&readfds, &writefds, server_fd, client_sockets, config.max_clients);
         check_accept_connection(&readfds, server_fd, client_sockets, config.max_clients);
 
-        for (int i = 0; i < config.max_clients; i++) {
+        for (size_t i = 0; i < config.max_clients; ++i) {
             ClientState* state = &client_sockets[i];
-            *state = ClientState_transition(state, &readfds, &writefds);
+            *state = ClientState_transition(state, &readfds, &writefds, config.dir_path);
         }
     }
 
     close(server_fd);
     return EXIT_SUCCESS;
 }
-

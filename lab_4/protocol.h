@@ -14,12 +14,11 @@ enum OperationPossibility {
     FAILED_TO_OPEN_FILE
 };
 
-
 typedef struct {
     uint64_t size;
 } FileSize;
 
-inline void exit_err(const char *msg) {
+static _Noreturn void exit_err(const char *msg) {
     perror(msg);
     exit(EXIT_FAILURE);
 }
