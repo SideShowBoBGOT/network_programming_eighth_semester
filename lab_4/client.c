@@ -73,27 +73,27 @@ static void send_receive_check_protocol_version(const int sock) {
 }
 
 static void send_filename_length(const int sock, const char* const filename) {
-    const send_info_t send_info = {strlen(filename)};
+    const FileNameLength send_info = {strlen(filename)};
     send(sock, &send_info, sizeof(send_info), 0);
     send(sock, filename, send_info.file_name_length, 0);
 }
 
-static file_size_t receive_file_info(const int sock) {
-    file_existence_t file_existence;
+static FileSize receive_file_existence_and_size(const int sock) {
+    FileExistence file_existence;
     recv(sock, &file_existence, sizeof(file_existence), 0);
     if (file_existence == FILE_NOT_FOUND) {
         printf("File not found on server.\n");
         close(sock);
         exit(1);
     }
-    file_size_t file_size;
+    FileSize file_size;
     recv(sock, &file_size, sizeof(file_size), 0);
     printf("File size: %lu\n", file_size.size);
     return file_size;
 }
 
-static size_t send_receive_readiness(const int sock, const file_size_t file_info, const uint32_t max_file_size) {
-    const file_receive_readiness_t readiness = file_info.size > max_file_size ? REFUSE_TO_RECEIVE : READY_TO_RECEIVE;
+static size_t send_receive_readiness(const int sock, const FileSize file_info, const uint32_t max_file_size) {
+    const FileReceiveReadiness readiness = file_info.size > max_file_size ? REFUSE_TO_RECEIVE : READY_TO_RECEIVE;
     send(sock, &readiness, sizeof(readiness), 0);
     if(readiness == REFUSE_TO_RECEIVE) {
         printf("File size exceeds maximum allowed size.\n");
@@ -107,7 +107,7 @@ static size_t send_receive_readiness(const int sock, const file_size_t file_info
 
 static void receive_file(
     const int sock,
-    const file_size_t file_info,
+    const FileSize file_info,
     const char* const filename,
     const size_t chunk_size
 ) {
@@ -143,7 +143,7 @@ int main(const int argc, char *argv[]) {
     const int sock = create_and_connect_socket(config.port, config.address);
     send_receive_check_protocol_version(sock);
     send_filename_length(sock, config.filename);
-    const file_size_t file_size = receive_file_info(sock);
+    const FileSize file_size = receive_file_existence_and_size(sock);
     const size_t chunk_size = send_receive_readiness(sock, file_size, config.max_file_size);
     receive_file(sock, file_size, config.filename, chunk_size);
     return EXIT_SUCCESS;

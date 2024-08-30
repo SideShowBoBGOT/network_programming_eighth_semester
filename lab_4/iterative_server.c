@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <string.h>
+#include <assert.h>
 #include "protocol.h"
 
 typedef struct {
@@ -179,57 +180,126 @@ static int create_and_bind_socket(const int port, const char* const address, con
 volatile sig_atomic_t keep_running = 1;
 static void handle_sigint(const int) { keep_running = 0; }
 
+typedef struct {} ClientState_Invalid;
+typedef struct { int client_fd; } ClientState_ReceiveProtocolVersion;
+typedef struct { int client_fd; } ClientState_SendMatchProtocolVersion;
+typedef struct { int client_fd; } ClientState_ReceiveFileNameLength;
+typedef struct { int client_fd; } ClientState_SendFileExistence;
+
+typedef enum {
+    ClientStateTag_INVALID,
+    ClientState_RECEIVE_PROTOCOL_VERSION,
+    ClientState_SEND_MATCH_PROTOCOL_VERSION,
+    ClientState_SEND_FILE_NAME_LENGTH,
+    ClientState_SEND_FILE_EXISTENCE,
+
+} ClientStateTag;
+
+typedef struct {
+    ClientStateTag tag;
+    union {
+        ClientState_Invalid invalid;
+        ClientState_ReceiveProtocolVersion receive_protocol_version;
+        ClientState_SendMatchProtocolVersion send_match_protocol_version;
+    } value;
+} ClientState;
+
+int ClientState_client_fd(const ClientState* client_state) {
+    switch (client_state->tag) {
+        case ClientStateTag_INVALID: {
+            exit_err("Can not get client_fd from INVALID state");
+        }
+        case ClientState_RECEIVE_PROTOCOL_VERSION: return client_state->value.receive_protocol_version.client_fd;
+        case ClientState_SEND_MATCH_PROTOCOL_VERSION: return client_state->value.send_match_protocol_version.client_fd;
+    }
+}
+
+ClientState ClientState_transition(
+    const ClientState* const generic_state,
+    const fd_set* const readfds,
+    const fd_set* const writefds
+) {
+    switch (generic_state->tag) {
+        case ClientStateTag_INVALID: return *generic_state;
+        case ClientState_RECEIVE_PROTOCOL_VERSION: {
+            const ClientState_ReceiveProtocolVersion* cur_state = &generic_state->value.receive_protocol_version;
+            if(FD_ISSET(cur_state->client_fd, readfds)) {
+                int client_protocol_version = 0;
+                recv(cur_state->client_fd, &client_protocol_version, sizeof(client_protocol_version), 0);
+                ClientState next_state;
+                next_state.tag = ClientState_SEND_MATCH_PROTOCOL_VERSION;
+                next_state.value.send_match_protocol_version.client_fd = cur_state->client_fd;
+                return next_state;
+            }
+            return *generic_state;
+        }
+    }
+}
+
 int set_read_write_max_fds(
     fd_set *readfds,
     fd_set *writefds,
     const int serverfd,
-    const int* client_sockets,
+    const ClientState* client_states,
     const size_t client_sockets_size
 ) {
     FD_ZERO(readfds);
     FD_ZERO(writefds);
-
     FD_SET(serverfd, readfds);
-
     int max_sd = serverfd;
     for (int i = 0; i < client_sockets_size; ++i) {
-        const int sd = client_sockets[i];
-        if (sd > -1) {
-            FD_SET(sd, readfds);
-            FD_SET(sd, writefds);
-        }
-        if (sd > max_sd) {
-            max_sd = sd;
+        const ClientState* state = &client_states[i];
+        if (state->tag != ClientStateTag_INVALID) {
+            const int client_fd = ClientState_client_fd(state);
+            FD_SET(client_fd, readfds);
+            FD_SET(client_fd, writefds);
+            if (client_fd > max_sd) {
+                max_sd = client_fd;
+            }
         }
     }
-
     return max_sd;
 }
 
 static void check_accept_connection(
     const fd_set *readfds,
     const int serverfd,
-    int* client_sockets,
-    const size_t client_sockets_size
+    ClientState* client_states,
+    const size_t client_states_size
 ) {
     if (FD_ISSET(serverfd, readfds)) {
         struct sockaddr_in address;
         socklen_t addr_len = sizeof(address);
-        const int new_socket = accept(serverfd, (struct sockaddr *)&address, &addr_len);
-        if (new_socket < 0) {
+        const int client_fd = accept(serverfd, (struct sockaddr *)&address, &addr_len);
+        if (client_fd < 0) {
             exit_err("accept()");
         }
 
         printf("New connection, socket fd is %d, IP is: %s, port: %d\n",
-               new_socket, inet_ntoa(address.sin_addr), ntohs(address.sin_port));
+               client_fd, inet_ntoa(address.sin_addr), ntohs(address.sin_port));
 
-        for (int i = 0; i < client_sockets_size; i++) {
-            if (client_sockets[i] == 0) {
-                client_sockets[i] = new_socket;
+        for (int i = 0; i < client_states_size; i++) {
+            if (client_states[i].tag == ClientStateTag_INVALID) {
+                client_states[i].tag = ClientState_RECEIVE_PROTOCOL_VERSION;
+                client_states[i].value.receive_protocol_version.client_fd = client_fd;
                 printf("Adding to list of sockets as %d\n", i);
                 break;
             }
         }
+    }
+}
+
+static void update_sets(
+    fd_set *readfds,
+    fd_set *writefds,
+    const int serverfd,
+    const ClientState* client_sockets,
+    const size_t client_sockets_size
+) {
+    const int max_fd = set_read_write_max_fds(readfds, writefds, serverfd, client_sockets, client_sockets_size);
+    const int activity = select(max_fd + 1, readfds, writefds, NULL, NULL);
+    if (activity < 0 && errno != EINTR) {
+        printf("select error");
     }
 }
 
@@ -239,44 +309,19 @@ int main(const int argc, const char *argv[]) {
     const int server_fd = create_and_bind_socket(config.port, config.address, config.max_clients);
 
     fd_set readfds;
-    fd_set writeds;
-    int client_sockets[config.max_clients];
-    memset(client_sockets, -1, config.max_clients);
+    fd_set writefds;
+    ClientState client_sockets[config.max_clients];
+    for (int i = 0; i < config.max_clients; ++i) {
+        client_sockets[i].tag = ClientStateTag_INVALID;
+    }
 
     while (keep_running) {
-        const int max_fd = set_read_write_max_fds(&readfds, &writeds, server_fd, client_sockets, config.max_clients);
-
-        const int activity = select(max_fd + 1, &readfds, &writeds, NULL, NULL);
-        if (activity < 0 && errno != EINTR) {
-            printf("select error");
-        }
+        update_sets(&readfds, &writefds, server_fd, client_sockets, config.max_clients);
         check_accept_connection(&readfds, server_fd, client_sockets, config.max_clients);
 
         for (int i = 0; i < config.max_clients; i++) {
-            const int sd = client_sockets[i];
-
-            if (FD_ISSET(sd, &readfds)) {
-
-
-                // const int valread = read(sd, numbers, sizeof(numbers));
-                // if (valread == 0) {
-                //     getpeername(sd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
-                //     printf("Host disconnected, ip %s, port %d\n",
-                //            inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-                //     close(sd);
-                //     client_sockets[i] = 0;
-                // } else {
-                //     const int count = valread / sizeof(int);
-                //     for (int j = 0; j < count; j++) {
-                //         numbers[j] *= 2;
-                //     }
-                //     sleep(4);
-                //     send(sd, numbers, count * sizeof(int), 0);
-                // }
-
-
-
-            }
+            ClientState* state = &client_sockets[i];
+            *state = ClientState_transition(state, &readfds, &writefds);
         }
     }
 
