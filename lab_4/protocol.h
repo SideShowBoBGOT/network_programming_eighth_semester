@@ -2,19 +2,18 @@
 
 #include <stdint.h>
 
-typedef enum {
-    READY_TO_RECEIVE,
-    REFUSE_TO_RECEIVE,
-} FileReceiveReadiness;
-
-typedef enum {
-    FILE_FOUND,
-    FILE_NOT_FOUND,
-} FileExistence;
-
 typedef struct {
-    uint8_t value;
-} FileNameLength;
+    uint8_t file_name_length;
+    off_t file_max_size;
+} FileNameLengthMaxSize;
+
+enum OperationPossibility {
+    OPERATION_POSSIBLE,
+    FILE_NOT_FOUND,
+    FILE_SIZE_GREATER_THAN_MAX_SIZE,
+    FAILED_TO_OPEN_FILE
+};
+
 
 typedef struct {
     uint64_t size;

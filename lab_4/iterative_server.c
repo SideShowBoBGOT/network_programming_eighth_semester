@@ -195,25 +195,22 @@ struct ClientState_SendMatchProtocolVersion {
     int client_fd;
     int client_protocol_version;
 };
-struct ClientState_ReceiveFileNameLength {
+struct ClientState_ReceiveFileNameLengthMaxSize {
     int client_fd;
 } ;
 struct ClientState_ReceiveFileName {
     int client_fd;
-    FileNameLength file_name_length;
-} ;
-struct ClientState_SendFileExistence {
+    FileNameLengthMaxSize file_name_length_max_size;
+};
+struct ClientState_SendFileOperationPossibility {
     int client_fd;
+    off_t file_max_size;
     struct FilePath file_name;
 };
-struct ClientState_SendFileSize {
-    int client_fd;
-    struct FilePath file_name;
-    off_t file_size;
-};
+
 struct ClientState_SendFileChunk {
     int client_fd;
-    struct FilePath file_name;
+    FILE* file;
 };
 struct ClientState_DropConnection {
     int client_fd;
@@ -223,12 +220,10 @@ typedef enum {
     ClientStateTag_INVALID,
     ClientState_RECEIVE_PROTOCOL_VERSION,
     ClientState_SEND_MATCH_PROTOCOL_VERSION,
-    ClientState_RECEIVE_FILE_NAME_LENGTH,
+    ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE,
     ClientState_RECEIVE_FILE_NAME,
-    ClientState_SEND_FILE_EXISTENCE,
-    ClientState_SEND_FILE_SIZE,
-
-
+    ClientState_SEND_FILE_OPERATION_POSSIBILITY,
+    ClientState_SEND_FILE_CHUNK,
     ClientState_DROP_CONNECTION
 } ClientStateTag;
 
@@ -238,10 +233,11 @@ typedef struct {
         struct ClientState_Invalid invalid;
         struct ClientState_ReceiveProtocolVersion receive_protocol_version;
         struct ClientState_SendMatchProtocolVersion send_match_protocol_version;
-        struct ClientState_ReceiveFileNameLength receive_file_name_length;
+        struct ClientState_ReceiveFileNameLengthMaxSize receive_file_name_length;
         struct ClientState_ReceiveFileName receive_file_name;
-        struct ClientState_SendFileExistence send_file_existence;
-        struct ClientState_SendFileSize send_file_size;
+        struct ClientState_SendFileOperationPossibility send_file_operation_possibility;
+
+        struct ClientState_SendFileChunk send_file_chunk;
         struct ClientState_DropConnection drop_connection;
     } value;
 } ClientState;
@@ -258,6 +254,13 @@ int ClientState_client_fd(const ClientState* client_state) {
 
 #define NAME_MAX_WITHOUT_NULL_TERMINATOR NAME_MAX
 #define PATH_MAX_WITHOUT_NULL_TERMINATOR PATH_MAX
+
+static ClientState construct_drop_connection(const int client_fd) {
+    ClientState new_state;
+    new_state.tag = ClientState_DROP_CONNECTION;
+    new_state.value.drop_connection.client_fd = client_fd;
+    return new_state;
+}
 
 ClientState ClientState_transition(
     const ClientState* const generic_state,
@@ -288,28 +291,27 @@ ClientState ClientState_transition(
                 const int server_protocol_version = 1;
                 const bool protocol_version_match = cur_state->client_protocol_version == server_protocol_version;
                 send(cur_state->client_fd, &protocol_version_match, sizeof(protocol_version_match), 0);
-                ClientState next_state;
                 if(!protocol_version_match) {
-                    next_state.tag = ClientState_DROP_CONNECTION;
-                    next_state.value.drop_connection.client_fd = cur_state->client_fd;
-                    return next_state;
+                    return construct_drop_connection(cur_state->client_fd);
                 }
-                next_state.tag = ClientState_RECEIVE_FILE_NAME_LENGTH;
+                ClientState next_state;
+                next_state.tag = ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE;
                 next_state.value.receive_file_name_length.client_fd = cur_state->client_fd;
                 return next_state;
             }
             return *generic_state;
         }
-        case ClientState_RECEIVE_FILE_NAME_LENGTH: {
-            const struct ClientState_ReceiveFileNameLength* const cur_state = &generic_state->value.receive_file_name_length;
+        case ClientState_RECEIVE_FILE_NAME_LENGTH_MAX_SIZE: {
+            const struct ClientState_ReceiveFileNameLengthMaxSize* const cur_state = &generic_state->value.receive_file_name_length;
             if(FD_ISSET(cur_state->client_fd, readfds)) {
                 ClientState next_state;
                 next_state.tag = ClientState_RECEIVE_FILE_NAME;
                 next_state.value.receive_file_name.client_fd = cur_state->client_fd;
+
                 recv(
                     cur_state->client_fd,
-                    &next_state.value.receive_file_name.file_name_length,
-                    sizeof(next_state.value.receive_file_name.file_name_length),
+                    &next_state.value.receive_file_name.file_name_length_max_size,
+                    sizeof(next_state.value.receive_file_name.file_name_length_max_size),
                     0
                 );
                 return next_state;
@@ -333,34 +335,66 @@ ClientState ClientState_transition(
                 struct FilePath file_path = {.value = {buffer, path_length}};
 
                 ClientState next_state;
-                next_state.tag = ClientState_SEND_FILE_EXISTENCE;
-                next_state.value.send_file_existence.client_fd = cur_state->client_fd;
-                next_state.value.send_file_existence.file_name = file_path;
+                next_state.tag = ClientState_SEND_FILE_OPERATION_POSSIBILITY;
+                next_state.value.send_file_operation_possibility.client_fd = cur_state->client_fd;
+                next_state.value.send_file_operation_possibility.file_max_size = cur_state->file_name_length_max_size.file_max_size;
+                next_state.value.send_file_operation_possibility.file_name = file_path;
 
                 return next_state;
             }
             return *generic_state;
         }
-        case ClientState_SEND_FILE_EXISTENCE: {
-            const struct ClientState_SendFileExistence* const cur_state = &generic_state->value.send_file_existence;
+        case ClientState_SEND_FILE_OPERATION_POSSIBILITY: {
+            const struct ClientState_SendFileOperationPossibility* const cur_state = &generic_state->value.send_file_operation_possibility;
             if(FD_ISSET(cur_state->client_fd, writefds)) {
                 struct stat st;
-                bool is_valid = stat(cur_state->file_name.value.buffer, &st) == -1 || !S_ISREG(st.st_mode);
-                send(cur_state->client_fd, &is_valid, sizeof(is_valid), 0);
-                ClientState next_state;
-                if(!is_valid) {
-                    next_state.tag = ClientState_DROP_CONNECTION;
-                    next_state.value.drop_connection.client_fd = cur_state->client_fd;
-                    return next_state;
+                {
+                    const bool is_found = stat(cur_state->file_name.value.buffer, &st) == -1 || !S_ISREG(st.st_mode);
+                    if(!is_found) {
+                        const enum OperationPossibility code = OperationPossibility::FILE_NOT_FOUND;
+                        send(cur_state->client_fd, &code, sizeof(code), 0);
+                        return construct_drop_connection(cur_state->client_fd);
+                    }
                 }
-                next_state.tag = ClientState_SEND_FILE_SIZE;
-                next_state.value.send_file_size.client_fd = cur_state->client_fd;
-                next_state.value.send_file_size.file_name = cur_state->file_name;
-                next_state.value.send_file_size.file_size = st.st_size;
-
+                if(cur_state->file_max_size < st.st_size) {
+                    const enum OperationPossibility code = OperationPossibility::FILE_SIZE_GREATER_THAN_MAX_SIZE;
+                    send(cur_state->client_fd, &code, sizeof(code), 0);
+                    return construct_drop_connection(cur_state->client_fd);
+                }
+                FILE* file = fopen(cur_state->file_name.value.buffer, "rb");
+                if(!file) {
+                    const enum OperationPossibility code = OperationPossibility::FAILED_TO_OPEN_FILE;
+                    send(cur_state->client_fd, &code, sizeof(code), 0);
+                    return construct_drop_connection(cur_state->client_fd);
+                }
+                ClientState next_state;
+                next_state.tag = ClientState_SEND_FILE_CHUNK;
+                next_state.value.send_file_chunk.client_fd = cur_state->client_fd;
+                next_state.value.send_file_chunk.file = file;
                 return next_state;
             }
+            return *generic_state;
         }
+        case ClientState_SEND_FILE_CHUNK: {
+            const struct ClientState_SendFileChunk* const cur_state = &generic_state->value.send_file_chunk;
+            if(FD_ISSET(cur_state->client_fd, writefds)) {
+                send(cur_state->client_fd, &cur_state->file_size, sizeof(cur_state->file_size), 0);
+                ClientState next_state;
+                next_state.tag = ClientState_RECEIVE_FILE_SIZE_NEGOTIATION;
+                next_state.value.receive_file_size_negotiation.client_fd = cur_state->client_fd;
+                next_state.value.receive_file_size_negotiation.file_name = cur_state->file_name;
+                return next_state;
+            }
+            return *generic_state;
+        }
+        case ClientState_DROP_CONNECTION: {
+            const struct ClientState_DropConnection* const cur_state = &generic_state->value.drop_connection;
+            close(cur_state->client_fd);
+            ClientState next_state;
+            next_state.tag = ClientStateTag_INVALID;
+            return next_state;
+        }
+
     }
 }
 
