@@ -1,9 +1,11 @@
+#include <ctype.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-#include <unistd.h>
+#include <errno.h>
 
 void print_usage(const char* program_name) {
     printf("Usage: %s [options] <address> [port]\n"
@@ -31,33 +33,28 @@ int main(int argc, char* argv[]) {
                 print_usage(argv[0]);
                 return 0;
             default:
-                fprintf(stderr, "Unknown option: %c\n", optopt);
+                fprintf(stderr, "Unknown option: %c\n", opt);
                 print_usage(argv[0]);
                 return 1;
         }
     }
 
-    if (optind >= argc) {
-        fprintf(stderr, "Error: Address argument is required.\n");
-        print_usage(argv[0]);
-        return 1;
+    struct addrinfo *res;
+    {
+        const char* address = argv[optind];
+        const char* port = (optind + 1 < argc) ? argv[optind + 1] : NULL;
+        struct addrinfo hints = {
+            .ai_family = use_ipv4 ? AF_INET : AF_INET6,
+            .ai_socktype = SOCK_STREAM
+        };
+        const int status = getaddrinfo(address, port, &hints, &res);
+        if (status != 0) {
+            fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+            return 1;
+        }
     }
-
-    const char* address = argv[optind];
-    const char* port = (optind + 1 < argc) ? argv[optind + 1] : NULL;
-
-    struct addrinfo hints, *res, *p;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = use_ipv4 ? AF_INET : AF_INET6;
-    hints.ai_socktype = SOCK_STREAM;
-
-    int status = getaddrinfo(address, port, &hints, &res);
-    if (status != 0) {
-        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
-        return 1;
-    }
-
-    for (p = res; p != NULL; p = p->ai_next) {
+    
+    for (struct addrinfo *p = res; p != NULL; p = p->ai_next) {
         void* addr;
         char ipstr[INET6_ADDRSTRLEN];
         uint16_t port;
@@ -72,7 +69,10 @@ int main(int argc, char* argv[]) {
             port = ntohs(ipv6->sin6_port);
         }
 
-        inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr));
+        if(inet_ntop(p->ai_family, addr, ipstr, sizeof(ipstr)) == 0) {
+            fprintf(stderr, "inet_ntop error: %s\n", strerror(errno));
+            return 1;
+        }
 
         printf("Address: %s", ipstr);
         if (!numeric_only) {
