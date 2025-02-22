@@ -4,7 +4,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <signal.h>
-#include <iterative_server_utils/iterative_server_utils.h>
+#include "iterative_server_utils.h"
 
 static void print_config(const IterativeServerConfig *config) {
     printf("Server Configuration:\n");

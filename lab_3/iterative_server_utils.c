@@ -1,5 +1,4 @@
-#include <iterative_server_utils/iterative_server_utils.h>
-
+#include "iterative_server_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,8 +10,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdbool.h>
-
-#include <protocol/protocol.h>
 
 void exit_err(const char *msg) {
     perror(msg);
@@ -120,17 +117,9 @@ void handle_client(
 #define MAX_BACKLOG 10
 
 int create_and_bind_socket(const int port, const char* const address) {
-    const int listenfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+    const int listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listenfd < 0)
         exit_err("socket()");
-
-    // Проблема була у тому, що після перезапуску сервера я не міг перевикористати той самий сокет.
-    // Як пояснила документація: треба явно прописати перевикористання.
-    {
-        const int optval = 1;
-        if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
-            exit_err("setsockopt(SO_REUSEADDR)");
-    }
 
     struct sockaddr_in srv_sin4 = {0};
     srv_sin4.sin_family = AF_INET;
