@@ -36,23 +36,45 @@ static void handle_sigint(const int) {
     keep_running = 0;
 }
 
-static void run_server(const IterativeServerConfig *config) {
-    const int listenfd = create_and_bind_socket(config->port, config->address);
-    signal(SIGINT, handle_sigint);
+#define MAX_BACKLOG 10
+
+static void inner_function(const int listenfd, const IterativeServerConfig *const config) {
+    struct sockaddr_in srv_sin4 = {
+        .sin_family  = AF_INET,
+        .sin_port = htons(config->port),
+        .sin_addr.s_addr = inet_addr(config->address)
+    };
+    if(bind(listenfd, (struct sockaddr *)&srv_sin4, sizeof(srv_sin4)) < 0) {
+        perror("bind failed");
+        return;
+    }
+
+    if(listen(listenfd, MAX_BACKLOG) < 0) {
+        perror("listen");
+        return;
+    }
+    printf("Server listening on %s:%d\n", config->address, config->port);
     while (keep_running) {
-        const int connfd = accept_connection(listenfd);
+        
+        struct sockaddr_in cln_sin4;
+        const socklen_t addrlen = sizeof(cln_sin4);
+        const int connfd = accept(listenfd, (struct sockaddr *)&cln_sin4, &addrlen);
         if (connfd < 0) {
             continue;
         }
+        printf("New connection from %s:%d\n", inet_ntoa(cln_sin4.sin_addr), ntohs(cln_sin4.sin_port));
         handle_client(connfd, config->dir_path);
         close(connfd);
     }
-
-    close(listenfd);
 }
 
 int main(const int argc, char *argv[]) {
+    signal(SIGINT, handle_sigint);
     const IterativeServerConfig config = handle_cmd_args(argc, argv);
-    run_server(&config);
+    const int listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listenfd < 0)
+        exit_err("socket()");    
+    inner_function(listenfd, &config);
+    close(listenfd);
     return EXIT_SUCCESS;
 }

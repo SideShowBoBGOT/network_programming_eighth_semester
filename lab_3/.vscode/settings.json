@@ -3,6 +3,8 @@
         "paths.h": "c",
         "fcntl.h": "c",
         "stat.h": "c",
-        "unistd.h": "c"
+        "unistd.h": "c",
+        "typeinfo": "cpp",
+        "in.h": "c"
     }
 }
