@@ -50,57 +50,57 @@ static void func(const ClientConfig *const config, const int sock) {
         server_addr.sin_family = AF_INET;
         server_addr.sin_port = htons(config->port);
         if (inet_pton(AF_INET, config->address, &server_addr.sin_addr) <= 0) {
-            perror("Invalid address");
+            printf("[Failed inet_pton] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             return;
         }
         if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-            perror("Connection failed");
+            printf("[Connection failed] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             return;
         }
     }
     {
         const uint8_t protocol_version = PROTOCOL_VERSION;
         if(not writen(sock, &protocol_version, sizeof(protocol_version), NULL)) {
-            perror("Failed to send protocol version");
+            printf("[Failed to send protocol version] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             return;
         }
-        printf("writen protocol version: %d\n", PROTOCOL_VERSION);
+        printf("[Written protocol version: %d]\n", PROTOCOL_VERSION);
         {
             bool is_protocol_version_ok;
             if(not readn(sock, &is_protocol_version_ok, sizeof(is_protocol_version_ok), NULL)) {
-                perror("Failed to receive protocol version ok");
+                printf("[Failed to receive protocol version ok] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
                 return;
             }
             if(not is_protocol_version_ok) {
-                printf("Protocol version mismatch");
+                printf("[Protocol version mismatch]\n");
                 return;
             }
-            printf("is_protocol_version_ok: %d\n", is_protocol_version_ok);
+            printf("[Protocol version match]\n");
         }
-        // filename_buff_t filename_buffer;
-        // strncpy(filename_buffer, config->filename, ARRAY_SIZE(filename_buffer));
-        // if(not writen(sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
-        //     perror("Failed to send filename buffer");
-        //     return;
-        // }
-        // {
-        //     FileSizeResult file_size_result;
-        //     if(not readn(sock, &file_size_result, sizeof(file_size_result), NULL)) {
-        //         perror("Failed to receive FileSizeResponseType");
-        //         return;
-        //     }
-        //     if(file_size_result != FileSizeResult_OK) {
-        //         printf("FileSizeResponseType: %d\n", file_size_result);
-        //         return;
-        //     }
-        // }
-        // size_t file_size;
-        // if(not readn(sock, &file_size, sizeof(file_size), NULL)) {
-        //     perror("Failed to receive file size");
-        //     return;
-        // }
-        // file_size = be64toh(file_size);
-        // printf("File size: %ld\n", file_size);
+        filename_buff_t filename_buffer;
+        strncpy(filename_buffer, config->filename, ARRAY_SIZE(filename_buffer));
+        if(not writen(sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
+            printf("[Failed to send filename buffer] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            return;
+        }
+        {
+            FileSizeResult file_size_result;
+            if(not readn(sock, &file_size_result, sizeof(file_size_result), NULL)) {
+                printf("[Failed to receive FileSizeResponseType] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+                return;
+            }
+            if(file_size_result != FileSizeResult_OK) {
+                printf("[FileSizeResponseType: %d]\n", file_size_result);
+                return;
+            }
+        }
+        size_t file_size;
+        if(not readn(sock, &file_size, sizeof(file_size), NULL)) {
+            printf("[Failed to receive file size] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            return;
+        }
+        file_size = be64toh(file_size);
+        printf("[File size: %ld]\n", file_size);
     }
     
     // {

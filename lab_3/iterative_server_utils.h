@@ -12,11 +12,8 @@
 #include <arpa/inet.h>
 #include <stdbool.h>
 #include <fcntl.h>
-
 #include "protocol.h"
-
 #include <endian.h>
-
 
 typedef struct {
     const char *address;
@@ -29,79 +26,82 @@ static void handle_client(
     const char* const dir_path
 ) {
     {
-        printf("pre client_protocol_version\n");
+        printf("[Client_sock: %d] [Start handling client]\n", client_sock);
         uint8_t client_protocol_version;
-        if(not readn(client_sock, &client_protocol_version, sizeof(client_protocol_version), NULL)) {        
-            perror("Failed to receive request");
+        if(not readn(client_sock, &client_protocol_version, sizeof(client_protocol_version), NULL)) {
+            printf("[Client_sock: %d] [Failed to receive request] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
             return;
         }
-        printf("client_sock: %d, client_protocol_version: %d\n", client_sock, client_protocol_version);
+        printf("[Client_sock: %d] [Client protocol version: %d]\n", client_sock, client_protocol_version);
         {
             const bool is_protocol_match = client_protocol_version == PROTOCOL_VERSION;
             if(not writen(client_sock, &is_protocol_match, sizeof(is_protocol_match), NULL)) {
-                perror("Failed to send protocol match");
+                printf("[Client_sock: %d] [Failed to send protocol match] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
                 return;
             }
-            printf("Sent protocol match: %d\n", is_protocol_match);
+            printf("[Client_sock: %d] [Sent protocol match: %d]\n", client_sock, is_protocol_match);
             if(not is_protocol_match) {
                 return;
             }
         }
     }
-    // const int fd = ({
-    //     FileSizeResult file_size_result;
-    //     const int fd = ({
-    //         filename_buff_t filename_buffer;
-    //         if(not readn(client_sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
-    //             perror("Failed to read filename buffer");
-    //             return;
-    //         }
+    const int fd = ({
+        FileSizeResult file_size_result;
+        const int fd = ({
+            filename_buff_t filename_buffer;
+            if(not readn(client_sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
+                printf("[Client_sock: %d] [Failed to read filename buffer] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+                return;
+            }
 
-    //         if(memchr(filename_buffer, '\0', ARRAY_SIZE(filename_buffer)) == NULL) {
-    //             printf("Filename is not a valid ");
-    //             file_size_result = FileSizeResult_ERROR_FILENAME_INVALID;
-    //             if(not writen(client_sock, &file_size_result, 1, NULL)) {
-    //                 perror("Failed to send file_size_result file name not valid");
-    //             }
-    //             return;
-    //         }
-    //         const size_t dir_path_strlen = strlen(dir_path);
-    //         const size_t filename_strlen = strlen(filename_buffer);
-    //         const size_t buffer_byte_count = dir_path_strlen + filename_strlen + 1;
-    //         char buffer[buffer_byte_count];
-    //         buffer[0] = 0;
-    //         strncpy(buffer, dir_path, dir_path_strlen);
-    //         strncat(buffer, filename_buffer, filename_strlen);
-    //         open(buffer, O_RDONLY);
-    //     });
-    //     if(fd == -1) {
-    //         file_size_result = FileSizeResult_ERROR_OPEN;
-    //         if(not writen(client_sock, &file_size_result, 1, NULL)) {
-    //             perror("Failed to send open file_size_result");
-    //             return;
-    //         }
-    //     }
-    //     const size_t network_file_size = ({
-    //         struct stat st;
-    //         if(fstat(fd, &st) == -1) {
-    //             file_size_result = FileSizeResult_ERROR_STAT;
-    //             if(not writen(client_sock, &file_size_result, 1, NULL)) {
-    //                 perror("Failed to send stat file_size_result");
-    //                 return;
-    //             }
-    //         }
-    //         htobe64(st.st_size);
-    //     });
-    //     file_size_result = FileSizeResult_OK;
-    //     if(not writen(client_sock, &file_size_result, 1, NULL)) {
-    //         perror("Failed to send ok file_size_result");
-    //         return;
-    //     }
-    //     if(not writen(client_sock, &network_file_size, sizeof(network_file_size), NULL)) {
-    //         perror("Failed to send file size");
-    //         return;
-    //     }
-    //     fd;
-    // });
-    // close(fd);
+            if(memchr(filename_buffer, '\0', ARRAY_SIZE(filename_buffer)) == NULL) {
+                printf("[Client_sock: %d] [FileSizeResult_ERROR_FILENAME_INVALID]\n", client_sock);
+                file_size_result = FileSizeResult_ERROR_FILENAME_INVALID;
+                if(not writen(client_sock, &file_size_result, 1, NULL)) {
+                    printf("[Client_sock: %d] [Failed to send FileSizeResult_ERROR_FILENAME_INVALID] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+                }
+                return;
+            }
+            const size_t dir_path_strlen = strlen(dir_path);
+            const size_t filename_strlen = strlen(filename_buffer);
+            const size_t buffer_byte_count = dir_path_strlen + 1 + filename_strlen + 1;
+            char buffer[buffer_byte_count];
+            snprintf(buffer, buffer_byte_count, "%s/%s", dir_path, filename_buffer);
+            printf("[Client_sock: %d] [Directory path: %s]\n", client_sock, dir_path);
+            const int fd = open(buffer, O_RDONLY);
+            if(fd == -1) {
+                printf("[Client_sock: %d] [FileSizeResult_ERROR_OPEN: %s] [errno: %d] [strerror: %s]\n", client_sock, buffer, errno, strerror(errno));
+                file_size_result = FileSizeResult_ERROR_OPEN;
+                if(not writen(client_sock, &file_size_result, 1, NULL)) {
+                    printf("[Client_sock: %d] [Failed to send FileSizeResult_ERROR_OPEN] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+                }
+                return;
+            }
+            fd;
+        });
+        
+        const size_t network_file_size = ({
+            struct stat st;
+            if(fstat(fd, &st) == -1) {
+                printf("[Client_sock: %d] [FileSizeResult_ERROR_STAT] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+                file_size_result = FileSizeResult_ERROR_STAT;
+                if(not writen(client_sock, &file_size_result, 1, NULL)) {
+                    printf("[Client_sock: %d] [Failed to send FileSizeResult_ERROR_STAT] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+                }
+                return;
+            }
+            htobe64(st.st_size);
+        });
+        file_size_result = FileSizeResult_OK;
+        if(not writen(client_sock, &file_size_result, 1, NULL)) {
+            printf("[Client_sock: %d] [Failed to send FileSizeResult_OK] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+            return;
+        }
+        if(not writen(client_sock, &network_file_size, sizeof(network_file_size), NULL)) {
+            printf("[Client_sock: %d] [Failed to send file size] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+            return;
+        }
+        fd;
+    });
+    close(fd);
 }

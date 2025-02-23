@@ -1,1 +1,1 @@
-./build/client.o 0.0.0.0 55001 sock.c 100000
+./build/client.o 0.0.0.0 55001 some.c 100000

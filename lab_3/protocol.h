@@ -20,9 +20,7 @@ static bool readn(const int fd, void *const vptr, const size_t n, size_t *nread)
     *nread = 0;
     while(*nread < n) {
         ssize_t local_nread = read(fd, (char*)vptr + *nread, n - *nread);
-        printf("local_nread: %lu\n", local_nread);
-
-        // printf("readn %lu\n", local_nread);
+        // printf("local_nread: %lu\n", local_nread);
         if(local_nread < 0) {
             if(errno == EINTR) {
                 continue;
@@ -43,7 +41,7 @@ static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrit
     *nwrite = 0;
     while(*nwrite < n) {
         ssize_t local_nwrite = write(fd, (const char*)vptr + *nwrite, n - *nwrite);
-        printf("local_nwrite: %lu\n", local_nwrite);
+        // printf("local_nwrite: %lu\n", local_nwrite);
         if(local_nwrite <= 0) {
             if (local_nwrite < 0 and errno == EINTR) {
                 continue;
