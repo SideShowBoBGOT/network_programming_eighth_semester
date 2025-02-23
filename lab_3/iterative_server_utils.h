@@ -103,5 +103,17 @@ static void handle_client(
         }
         fd;
     });
+    {
+        bool is_file_size_ok;
+        if(not readn(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
+            printf("[Client_sock: %d] [Failed to receive is_file_size_ok] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+            return;
+        }
+        if(not is_file_size_ok) {
+            printf("[Client_sock: %d] [File size is not ok]\n", client_sock);
+            return;
+        }
+    }
+    printf("[Ready to send file]\n");
     close(fd);
 }

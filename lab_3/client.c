@@ -58,7 +58,7 @@ static void func(const ClientConfig *const config, const int sock) {
             return;
         }
     }
-    {
+    const size_t file_size = ({
         const uint8_t protocol_version = PROTOCOL_VERSION;
         if(not writen(sock, &protocol_version, sizeof(protocol_version), NULL)) {
             printf("[Failed to send protocol version] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
@@ -99,30 +99,21 @@ static void func(const ClientConfig *const config, const int sock) {
             printf("[Failed to receive file size] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             return;
         }
-        file_size = be64toh(file_size);
-        printf("[File size: %ld]\n", file_size);
+        be64toh(file_size);
+    });
+    printf("[File size: %ld]\n", file_size);
+    {
+        const bool is_file_size_ok = file_size <= config->max_file_size;
+        if(not writen(sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
+            printf("[Failed to send is_file_size_ok] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            return;
+        }
+        if(not is_file_size_ok) {
+            printf("[File size is too large] [max_file_size: %lu] [file_size: %lu]\n", config->max_file_size, file_size);
+            return;
+        }
     }
-    
-    // {
-    //     FileReceivingReadinessMessage message;
-    //     message.data = file_data.host_file_size <= config->max_file_size;
-        
-    //     if() {
-    //         fprintf(stderr, "File too large: %ld\n", file_data.host_file_size);
-    //         if(send(sock, &readiness, sizeof(readiness), 0) == -1) {
-    //             perror("Failed to send readiness");
-    //             return;
-    //         }
-    //         return;
-    //     }
-    //     readiness = true;
-    //     if(send(sock, &readiness, sizeof(readiness), 0) == -1) {
-    //         perror("Failed to send readiness");
-    //         return;
-    //     }
-    // }
-    
-
+    printf("[Ready to receive file]\n");
     // {
     //     const int file_fd = open(config->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     //     if (file_fd < 0) {
