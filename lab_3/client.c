@@ -15,7 +15,7 @@
 typedef struct {
     const char *address;
     uint16_t port;
-    const char filename[255];
+    const char *filename;
     size_t max_file_size;
 } ClientConfig;
 
@@ -36,7 +36,7 @@ static ClientConfig handle_cmd_args(const int argc, char **argv) {
         .address = argv[1],
         .port = (uint16_t)atoi(argv[2]),
         .filename = argv[3],
-        .max_file_size = (uint64_t)(argv[4])
+        .max_file_size = (uint64_t)atoi(argv[4])
     };
 
     print_config(&config);
@@ -59,14 +59,15 @@ static void func(const ClientConfig *const config, const int sock) {
         }
     }
     {
-        const uint16_t protocol_version = htons(PROTOCOL_VERSION);
-        if(writen(sock, &protocol_version, sizeof(protocol_version)) == -1) {
+        const uint8_t protocol_version = PROTOCOL_VERSION;
+        if(not writen(sock, &protocol_version, sizeof(protocol_version), NULL)) {
             perror("Failed to send protocol version");
             return;
         }
+        printf("writen protocol version: %d\n", PROTOCOL_VERSION);
         {
             bool is_protocol_version_ok;
-            if(readn(sock, &is_protocol_version_ok, sizeof(is_protocol_version_ok))) {
+            if(not readn(sock, &is_protocol_version_ok, sizeof(is_protocol_version_ok), NULL)) {
                 perror("Failed to receive protocol version ok");
                 return;
             }
@@ -74,31 +75,32 @@ static void func(const ClientConfig *const config, const int sock) {
                 printf("Protocol version mismatch");
                 return;
             }
+            printf("is_protocol_version_ok: %d\n", is_protocol_version_ok);
         }
-        filename_buff_t filename_buffer;
-        memcpy(filename_buffer, config->filename, ARRAY_SIZE(filename_buffer));
-        if(writen(sock, filename_buffer, ARRAY_SIZE(filename_buffer)) == -1) {
-            perror("Failed to send filename buffer");
-            return;
-        }
-        {
-            FileSizeResponseType file_size_response_type;
-            if(readn(sock, &file_size_response_type, 1) == -1) {
-                perror("Failed to receive FileSizeResponseType");
-                return;
-            }
-            if(file_size_response_type != FileSizeResponseType_OK) {
-                printf("FileSizeResponseType: %d\n", FileSizeResponseType_OK);
-                return;
-            }
-        }
-        size_t file_size;
-        if(readn(sock, &file_size, sizeof(file_size)) == -1) {
-            perror("Failed to receive file size");
-            return;
-        }
-        file_size = be64toh(file_size);
-        printf("File size: %d\n", file_size);
+        // filename_buff_t filename_buffer;
+        // strncpy(filename_buffer, config->filename, ARRAY_SIZE(filename_buffer));
+        // if(not writen(sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
+        //     perror("Failed to send filename buffer");
+        //     return;
+        // }
+        // {
+        //     FileSizeResult file_size_result;
+        //     if(not readn(sock, &file_size_result, sizeof(file_size_result), NULL)) {
+        //         perror("Failed to receive FileSizeResponseType");
+        //         return;
+        //     }
+        //     if(file_size_result != FileSizeResult_OK) {
+        //         printf("FileSizeResponseType: %d\n", file_size_result);
+        //         return;
+        //     }
+        // }
+        // size_t file_size;
+        // if(not readn(sock, &file_size, sizeof(file_size), NULL)) {
+        //     perror("Failed to receive file size");
+        //     return;
+        // }
+        // file_size = be64toh(file_size);
+        // printf("File size: %ld\n", file_size);
     }
     
     // {
@@ -148,5 +150,6 @@ int main(const int argc, char *argv[]) {
     } else {
         func(&config, sock);
     }
+
     return EXIT_SUCCESS;
 }

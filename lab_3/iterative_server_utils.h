@@ -15,145 +15,93 @@
 
 #include "protocol.h"
 
+#include <endian.h>
+
+
 typedef struct {
     const char *address;
-    int port;
+    uint16_t port;
     const char *dir_path;
 } IterativeServerConfig;
 
-void exit_err(const char *msg) {
-    perror(msg);
-    exit(EXIT_FAILURE);
-}
-
-void warn_err(const char *msg) {
-    perror(msg);
-}
-
-static bool receive_send_check_protocol_version(const int client_sock) {
-    int client_protocol_version = 0;
-    recv(client_sock, &client_protocol_version, sizeof(client_protocol_version), 0);
-    const int server_protocol_version = 1;
-    const bool protocol_version_match = client_protocol_version == server_protocol_version;
-    send(client_sock, &protocol_version_match, sizeof(protocol_version_match), 0);
-    if(!protocol_version_match) {
-        printf("Protocol version mismatch.\n");
-        close(client_sock);
-        return false;
-    }
-    return true;
-}
-
-#define MAX_FILENAME_LENGTH 256
-
-static bool check_file_existance_and_permissions(
-    const int client_sock,
-    const char *const dir_path,
-    const char *const filename
-) {
-    
-
-    struct stat st;
-    if (stat(buffer, &st) == -1 || !S_ISREG(st.st_mode)) {
-        const file_existence_t file_existence = FILE_NOT_FOUND;
-        send(client_sock, &file_existence, sizeof(file_existence), 0);
-        close(client_sock);
-        return false;
-    }
-    const file_existence_t file_existence = FILE_FOUND;
-    send(client_sock, &file_existence, sizeof(file_existence), 0);
-    const file_size_t file_size = {.size = st.st_size};
-    printf("File size: %lu\n", file_size.size);
-    send(client_sock, &file_size, sizeof(file_size), 0);
-    return true;
-}
-
-const size_t CHUNK_SIZE = 1;
-
-static bool check_file_readiness(const int client_sock) {
-    file_receive_readiness_t file_receive_readiness;
-    recv(client_sock, &file_receive_readiness, sizeof(file_receive_readiness), 0);
-    if (file_receive_readiness == REFUSE_TO_RECEIVE) {
-        printf("Client refused to receive file.\n");
-        close(client_sock);
-        return false;
-    }
-    send(client_sock, &CHUNK_SIZE, sizeof(CHUNK_SIZE), 0);
-    return true;
-}
-
-void handle_client(
+static void handle_client(
     const int client_sock,
     const char* const dir_path
 ) {
     {
-        uint16_t client_protocol_version;
-        if(readn(client_sock, &client_protocol_version, sizeof(client_protocol_version)) == -1) {        
+        printf("pre client_protocol_version\n");
+        uint8_t client_protocol_version;
+        if(not readn(client_sock, &client_protocol_version, sizeof(client_protocol_version), NULL)) {        
             perror("Failed to receive request");
             return;
         }
+        printf("client_sock: %d, client_protocol_version: %d\n", client_sock, client_protocol_version);
         {
-            const bool is_protocol_match = ntohs(client_protocol_version) == PROTOCOL_VERSION;
-            if(writen(client_sock, &is_protocol_match, 1) == -1) {
+            const bool is_protocol_match = client_protocol_version == PROTOCOL_VERSION;
+            if(not writen(client_sock, &is_protocol_match, sizeof(is_protocol_match), NULL)) {
                 perror("Failed to send protocol match");
                 return;
             }
+            printf("Sent protocol match: %d\n", is_protocol_match);
             if(not is_protocol_match) {
                 return;
             }
         }
     }
-    
-    filename_buff_t filename_buffer;
-    if(readn(client_sock, filename_buffer, ARRAY_SIZE(filename_buffer)) == -1) {
-        perror("Failed to read filename buffer");
-        return;
-    }
-    if(memchr(filename_buffer, '\0', ARRAY_SIZE(filename_buffer)) == NULL) {
-        printf("Filename is not a valid ");
-    }
-    {
-        int fd;
-        {
-            const size_t dir_path_strlen = strlen(dir_path);
-            const size_t filename_strlen = strlen(filename_buffer);
-            const size_t buffer_byte_count = dir_path_strlen + filename_strlen + 1;
-            uint8_t buffer[buffer_byte_count];
-            buffer[0] = 0;
-            strncpy(buffer, dir_path, dir_path_strlen);
-            strncat(buffer, filename_buffer, filename_strlen);
+    // const int fd = ({
+    //     FileSizeResult file_size_result;
+    //     const int fd = ({
+    //         filename_buff_t filename_buffer;
+    //         if(not readn(client_sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
+    //             perror("Failed to read filename buffer");
+    //             return;
+    //         }
 
-            fd = open(buffer, O_RDONLY);
-        }
-        if(fd == -1) {
-            return;
-        }
-        {
-            struct stat st;
-            if(fstat(fd, &st) == -1) {
-                return false;
-            }
-
-            st.st_size;
-        }
-
-        close(fd);
-    }
-    
-    FILE *file = fopen(filepath, "rb");
-    if (!file) {
-        perror("Failed to open file");
-        close(client_sock);
-        return;
-    }
-
-    char buffer[CHUNK_SIZE];
-    size_t bytes_read;
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        // printf("Process %d read bytes: %lu\n", getpid(), bytes_read);
-        send(client_sock, buffer, bytes_read, 0);
-    }
-
-    fclose(file);
-    close(client_sock);
+    //         if(memchr(filename_buffer, '\0', ARRAY_SIZE(filename_buffer)) == NULL) {
+    //             printf("Filename is not a valid ");
+    //             file_size_result = FileSizeResult_ERROR_FILENAME_INVALID;
+    //             if(not writen(client_sock, &file_size_result, 1, NULL)) {
+    //                 perror("Failed to send file_size_result file name not valid");
+    //             }
+    //             return;
+    //         }
+    //         const size_t dir_path_strlen = strlen(dir_path);
+    //         const size_t filename_strlen = strlen(filename_buffer);
+    //         const size_t buffer_byte_count = dir_path_strlen + filename_strlen + 1;
+    //         char buffer[buffer_byte_count];
+    //         buffer[0] = 0;
+    //         strncpy(buffer, dir_path, dir_path_strlen);
+    //         strncat(buffer, filename_buffer, filename_strlen);
+    //         open(buffer, O_RDONLY);
+    //     });
+    //     if(fd == -1) {
+    //         file_size_result = FileSizeResult_ERROR_OPEN;
+    //         if(not writen(client_sock, &file_size_result, 1, NULL)) {
+    //             perror("Failed to send open file_size_result");
+    //             return;
+    //         }
+    //     }
+    //     const size_t network_file_size = ({
+    //         struct stat st;
+    //         if(fstat(fd, &st) == -1) {
+    //             file_size_result = FileSizeResult_ERROR_STAT;
+    //             if(not writen(client_sock, &file_size_result, 1, NULL)) {
+    //                 perror("Failed to send stat file_size_result");
+    //                 return;
+    //             }
+    //         }
+    //         htobe64(st.st_size);
+    //     });
+    //     file_size_result = FileSizeResult_OK;
+    //     if(not writen(client_sock, &file_size_result, 1, NULL)) {
+    //         perror("Failed to send ok file_size_result");
+    //         return;
+    //     }
+    //     if(not writen(client_sock, &network_file_size, sizeof(network_file_size), NULL)) {
+    //         perror("Failed to send file size");
+    //         return;
+    //     }
+    //     fd;
+    // });
+    // close(fd);
 }

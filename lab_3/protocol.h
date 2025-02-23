@@ -11,50 +11,56 @@
 #include <iso646.h>
 #include <assert.h>
 
-static ssize_t readn(int fd, void *vptr, size_t n) {
-    size_t nleft;
-    ssize_t nread;
-    char *ptr = (char *)vptr;
+#define ARRAY_SIZE(data) sizeof((data)) / sizeof(data[0])
 
-    nleft = n;
-    while (nleft > 0) {
-        if ((nread = read(fd, ptr, nleft)) < 0) {
-            if (errno == EINTR)
-                nread = 0; /* and call read() again */
-            else
-                return (-1);
-        } else if (nread == 0)
-            break; /* EOF */
-
-        nleft -= nread;
-        ptr += nread;
+static bool readn(const int fd, void *const vptr, const size_t n, size_t *nread) {
+    if(nread == NULL) {
+        nread = alloca(sizeof(*nread));
     }
-    return (n - nleft); /* return >= 0 */
-}
+    *nread = 0;
+    while(*nread < n) {
+        ssize_t local_nread = read(fd, (char*)vptr + *nread, n - *nread);
+        printf("local_nread: %lu\n", local_nread);
 
-static ssize_t writen(int fd, const void *vptr, size_t n) {
-    size_t nleft;
-    ssize_t nwritten;
-    const char *ptr = (const char *)vptr;
-    nleft = n;
-    while (nleft > 0) {
-        if ((nwritten = write(fd, ptr, nleft)) <= 0) {
-            if (nwritten < 0 && errno == EINTR)
-                nwritten = 0; /* and call write() again */
-            else
-                return (-1); /* error */
+        // printf("readn %lu\n", local_nread);
+        if(local_nread < 0) {
+            if(errno == EINTR) {
+                continue;
+            }
+            return false;
+        } else if(local_nread == 0) {
+            break;
         }
-        nleft -= nwritten;
-        ptr += nwritten;
+        *nread += (size_t)local_nread;
     }
-    return (n);
+    return true;
 }
 
-#define PROTOCOL_VERSION 1345
-typedef uint8_t filename_buff_t[255];
+static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrite) {
+    if(nwrite == NULL) {
+        nwrite = alloca(sizeof(*nwrite));
+    }
+    *nwrite = 0;
+    while(*nwrite < n) {
+        ssize_t local_nwrite = write(fd, (const char*)vptr + *nwrite, n - *nwrite);
+        printf("local_nwrite: %lu\n", local_nwrite);
+        if(local_nwrite <= 0) {
+            if (local_nwrite < 0 and errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        *nwrite += (size_t)local_nwrite;
+    }
+    return true;
+}
+
+#define PROTOCOL_VERSION 17
+typedef char filename_buff_t[255];
 
 typedef enum __attribute__((packed)) {
-    FileSizeResponseType_OK,
-    FileSizeResponseType_FILE_NOT_FOUND,  
-    FileSizeResponseType_FILENAME_INVALID,  
-} FileSizeResponseType;
+    FileSizeResult_OK,
+    FileSizeResult_ERROR_FILENAME_INVALID,
+    FileSizeResult_ERROR_OPEN,  
+    FileSizeResult_ERROR_STAT,  
+} FileSizeResult;

@@ -21,7 +21,7 @@ static IterativeServerConfig handle_cmd_args(const int argc, char **argv) {
 
     const IterativeServerConfig config = {
         .address = argv[1],
-        .port = atoi(argv[2]),
+        .port = (uint16_t)atoi(argv[2]),
         .dir_path = argv[3],
     };
 
@@ -30,9 +30,8 @@ static IterativeServerConfig handle_cmd_args(const int argc, char **argv) {
     return config;
 }
 
-volatile sig_atomic_t keep_running = 1;
-
-static void handle_sigint(const int) {
+static volatile sig_atomic_t keep_running = 1;
+static void handle_sigint(const int val __attribute__((unused))) {
     keep_running = 0;
 }
 
@@ -54,17 +53,16 @@ static void inner_function(const int listenfd, const IterativeServerConfig *cons
         return;
     }
     printf("Server listening on %s:%d\n", config->address, config->port);
-    while (keep_running) {
-        
-        struct sockaddr_in cln_sin4;
-        const socklen_t addrlen = sizeof(cln_sin4);
-        const int connfd = accept(listenfd, (struct sockaddr *)&cln_sin4, &addrlen);
-        if (connfd < 0) {
+    while (true) {
+        struct sockaddr_in client_in;
+        socklen_t addrlen = sizeof(client_in);
+        const int connection_fd = accept(listenfd, (struct sockaddr *)&client_in, &addrlen);
+        if (connection_fd < 0) {
             continue;
         }
-        printf("New connection from %s:%d\n", inet_ntoa(cln_sin4.sin_addr), ntohs(cln_sin4.sin_port));
-        handle_client(connfd, config->dir_path);
-        close(connfd);
+        printf("New connection from %s:%d\n", inet_ntoa(client_in.sin_addr), ntohs(client_in.sin_port));
+        handle_client(connection_fd, config->dir_path);
+        close(connection_fd);
     }
 }
 
@@ -72,8 +70,10 @@ int main(const int argc, char *argv[]) {
     signal(SIGINT, handle_sigint);
     const IterativeServerConfig config = handle_cmd_args(argc, argv);
     const int listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listenfd < 0)
-        exit_err("socket()");    
+    if (listenfd < 0) {
+        perror("socket failed");
+        return EXIT_FAILURE;
+    }
     inner_function(listenfd, &config);
     close(listenfd);
     return EXIT_SUCCESS;
