@@ -150,10 +150,10 @@ static void main_logic(const ClientConfig *const config, const int sock) {
         }
         return;
     }
-    DEFER({
+    DEFER(
         close(pipefd[0]);
         close(pipefd[1]);
-    }) {
+    ) {
         const int file_fd = open(config->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if(file_fd < 0) {
             const bool is_client_ready = false;
@@ -162,9 +162,9 @@ static void main_logic(const ClientConfig *const config, const int sock) {
                 printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
             }
         } else {
-            DEFER({
+            DEFER(
                 close(file_fd);
-            }) {
+            ) {
                 const bool is_client_ready = true;
                 if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
                     printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
