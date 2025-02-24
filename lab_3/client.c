@@ -84,13 +84,13 @@ static void func(const ClientConfig *const config, const int sock) {
             return;
         }
         {
-            FileSizeResult file_size_result;
-            if(not readn(sock, &file_size_result, sizeof(file_size_result), NULL)) {
-                printf("[Failed to receive FileSizeResponseType] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            bool is_file_size_ok;
+            if(not readn(sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
+                printf("[Failed to receive is_file_size_ok] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
                 return;
             }
-            if(file_size_result != FileSizeResult_OK) {
-                printf("[FileSizeResponseType: %d]\n", file_size_result);
+            if(not is_file_size_ok) {
+                printf("[File size is not ok]\n");
                 return;
             }
         }

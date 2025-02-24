@@ -1,5 +1,6 @@
 #pragma once
-
+#define _GNU_SOURCE         /* See feature_test_macros(7) */
+#include <fcntl.h>
 #include <unistd.h>
 #include <inttypes.h>
 #include <unistd.h>
@@ -41,7 +42,6 @@ static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrit
     *nwrite = 0;
     while(*nwrite < n) {
         ssize_t local_nwrite = write(fd, (const char*)vptr + *nwrite, n - *nwrite);
-        // printf("local_nwrite: %lu\n", local_nwrite);
         if(local_nwrite <= 0) {
             if (local_nwrite < 0 and errno == EINTR) {
                 continue;
@@ -56,9 +56,3 @@ static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrit
 #define PROTOCOL_VERSION 17
 typedef char filename_buff_t[255];
 
-typedef enum __attribute__((packed)) {
-    FileSizeResult_OK,
-    FileSizeResult_ERROR_FILENAME_INVALID,
-    FileSizeResult_ERROR_OPEN,  
-    FileSizeResult_ERROR_STAT,  
-} FileSizeResult;
