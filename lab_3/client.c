@@ -43,7 +43,37 @@ static ClientConfig handle_cmd_args(const int argc, char **argv) {
     return config;
 }
 
-static void func(const ClientConfig *const config, const int sock) {
+static void receive_file(
+    const int sock,
+    const size_t file_size,
+    const int pipe_in,
+    const int pipe_out,
+    const int file_fd
+) {
+    printf("[Started receiving file file]\n");
+    size_t nread = 0;
+    off_t write_offset = 0;
+    while((size_t)write_offset < file_size) {
+        {
+            const ssize_t local_read = splice(sock, NULL, pipe_out, NULL, file_size - nread, 0);
+            if(local_read < 0) {
+                printf("[Failed to read splice] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+                break;
+            }
+            nread += (size_t)local_read;
+        }
+        {
+            const ssize_t local_write = splice(pipe_in, NULL, file_fd, &write_offset, file_size - (size_t)write_offset, 0);
+            if(local_write < 0) {
+                printf("[Failed to write splice] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+                break;
+            }
+        }
+    }
+    printf("[Finished receiving file file]\n");
+}
+
+static void main_logic(const ClientConfig *const config, const int sock) {
     {
         struct sockaddr_in server_addr;
         server_addr.sin_family = AF_INET;
@@ -100,61 +130,50 @@ static void func(const ClientConfig *const config, const int sock) {
         }
         be64toh(file_size);
     });
-    printf("[File size: %ld]\n", file_size);
-    
-    int file_fd = -1;
-    int pipefd[2] = {0};
+    printf("[File size: %ld]\n", file_size);    
     {
-        __label__ send_is_client_ready;
-        bool is_client_ready = file_size <= config->max_file_size;
+        const bool is_client_ready = file_size <= config->max_file_size;
         if(not is_client_ready) {
             printf("[Server file size is too large: %lu]\n", file_size);
-            goto send_is_client_ready;
+            if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
+                printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
+            }
+            return;
         }
-        if(pipe(pipefd) < 0) {
-            printf("[Can not create pipe] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
-            is_client_ready = false;
-            goto send_is_client_ready;
-        }
-        file_fd = open(config->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if(file_fd < 0) {
-            is_client_ready = false;
-            printf("[Failed to open file for writing] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
-            goto send_is_client_ready;
-        }
-        
-        send_is_client_ready:
+    }
+    int pipefd[2];
+    if(pipe(pipefd) < 0) {
+        printf("[Can not create pipe] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+        const bool is_client_ready = false;
         if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
             printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
-            return;
         }
-        if(not is_client_ready) {
-            printf("[Client is not able to receive the file]\n");
-            return;
+        return;
+    }
+    DEFER({
+        close(pipefd[0]);
+        close(pipefd[1]);
+    }) {
+        const int file_fd = open(config->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if(file_fd < 0) {
+            const bool is_client_ready = false;
+            printf("[Failed to open file for writing] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
+                printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
+            }
+        } else {
+            DEFER({
+                close(file_fd);
+            }) {
+                const bool is_client_ready = true;
+                if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
+                    printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
+                } else {
+                    receive_file(sock, file_size, pipefd[0], pipefd[1], file_fd);
+                }
+            }
         }
     }
-    printf("[Ready to receive file]\n");
-    size_t nread = 0;
-    off_t write_offset = 0;
-    while((size_t)write_offset < file_size) {
-        {
-            const ssize_t local_read = splice(sock, NULL, pipefd[1], NULL, file_size - nread, 0);
-            if(local_read < 0) {
-                printf("[Failed to read splice] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
-                return;
-            }
-            nread += (size_t)local_read;
-        }
-        {
-            const ssize_t local_write = splice(pipefd[0], NULL, file_fd, &write_offset, file_size - (size_t)write_offset, 0);
-            if(local_write < 0) {
-                printf("[Failed to write splice] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
-                return;
-            }
-        }
-    }
-    close(file_fd);
-    printf("[finished receiving file file]\n");
 }
 
 int main(const int argc, char *argv[]) {
@@ -164,8 +183,7 @@ int main(const int argc, char *argv[]) {
     if (sock == -1) {
         perror("Socket creation failed");
     } else {
-        func(&config, sock);
+        main_logic(&config, sock);
     }
-
     return EXIT_SUCCESS;
 }

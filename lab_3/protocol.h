@@ -12,7 +12,19 @@
 #include <iso646.h>
 #include <assert.h>
 
+
+#define ALWAYS_INLINE static inline __attribute((always_inline))
+
+#define CONCAT_IMPL(x, y) x##y
+#define CONCAT(x, y) CONCAT_IMPL(x, y)
+
+#define UNIQUE_NAME_LINE(prefix) CONCAT(prefix, __LINE__)
+#define UNIQUE_NAME_COUNTER(prefix) CONCAT(prefix, __COUNTER__)
+#define UNIQUE_NAME(prefix) UNIQUE_NAME_COUNTER(UNIQUE_NAME_LINE(prefix))
+
 #define ARRAY_SIZE(data) sizeof((data)) / sizeof(data[0])
+#define DEFER(block) for(char UNIQUE_NAME_LINE(flag) = 1; UNIQUE_NAME_LINE(flag); UNIQUE_NAME_LINE(flag) = 0, (block))
+
 
 static bool readn(const int fd, void *const vptr, const size_t n, size_t *nread) {
     if(nread == NULL) {
