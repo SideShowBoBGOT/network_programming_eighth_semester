@@ -1,5 +1,5 @@
 #pragma once
-#define _GNU_SOURCE         /* See feature_test_macros(7) */
+#define _GNU_SOURCE
 #include <fcntl.h>
 #include <unistd.h>
 #include <inttypes.h>
@@ -28,6 +28,7 @@ static bool readn(const int fd, void *const vptr, const size_t n, size_t *nread)
             }
             return false;
         } else if(local_nread == 0) {
+            // EOF
             break;
         }
         *nread += (size_t)local_nread;
@@ -55,4 +56,3 @@ static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrit
 
 #define PROTOCOL_VERSION 17
 typedef char filename_buff_t[255];
-

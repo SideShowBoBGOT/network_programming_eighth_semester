@@ -15,7 +15,6 @@
 #include <sys/sendfile.h>
 #include <endian.h>
 #include <alloca.h>
-
 #include "protocol.h"
 
 typedef struct {
@@ -120,18 +119,18 @@ static void handle_client(
     }
     printf("[Ready to send file]\n");
 
-    // {
-    //     off_t offset = 0;
-    //     while(offset < fd_size.size) {
-    //         const ssize_t nsendfile = sendfile(client_sock, fd_size.fd, &offset, fd_size.size - offset);
-    //         if(nsendfile < 0) {
-    //             printf("[Client_sock: %d] [Failed to sendfile] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
-    //             return;
-    //         } else if(nsendfile == 0) {
-    //             break;
-    //         }
-    //     }
-    // }
+    {
+        off_t offset = 0;
+        while((size_t)offset < fd_size.size) {
+            const ssize_t nsendfile = sendfile(client_sock, fd_size.fd, &offset, fd_size.size - (size_t)offset);
+            if(nsendfile < 0) {
+                printf("[Client_sock: %d] [Failed to sendfile] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
+                return;
+            } else if(nsendfile == 0) {
+                break;
+            }
+        }
+    }
     printf("[Client_sock: %d] [Finished sending file]\n", client_sock);
     close(fd_size.fd);
 }

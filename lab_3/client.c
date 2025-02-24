@@ -9,7 +9,6 @@
 #include <sys/stat.h> 
 #include <fcntl.h>
 #include <netinet/in.h>
-
 #include "protocol.h"
 
 typedef struct {
@@ -102,34 +101,60 @@ static void func(const ClientConfig *const config, const int sock) {
         be64toh(file_size);
     });
     printf("[File size: %ld]\n", file_size);
+    
+    int file_fd = -1;
+    int pipefd[2] = {0};
     {
-        const bool is_file_size_ok = file_size <= config->max_file_size;
-        if(not writen(sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
-            printf("[Failed to send is_file_size_ok] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+        __label__ send_is_client_ready;
+        bool is_client_ready = file_size <= config->max_file_size;
+        if(not is_client_ready) {
+            printf("[Server file size is too large: %lu]\n", file_size);
+            goto send_is_client_ready;
+        }
+        if(pipe(pipefd) < 0) {
+            printf("[Can not create pipe] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            is_client_ready = false;
+            goto send_is_client_ready;
+        }
+        file_fd = open(config->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if(file_fd < 0) {
+            is_client_ready = false;
+            printf("[Failed to open file for writing] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            goto send_is_client_ready;
+        }
+        
+        send_is_client_ready:
+        if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
+            printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
             return;
         }
-        if(not is_file_size_ok) {
-            printf("[File size is too large] [max_file_size: %lu] [file_size: %lu]\n", config->max_file_size, file_size);
+        if(not is_client_ready) {
+            printf("[Client is not able to receive the file]\n");
             return;
         }
     }
     printf("[Ready to receive file]\n");
-    // {
-    //     const int file_fd = open(config->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    //     if (file_fd < 0) {
-    //         perror("open");
-    //         return;
-    //     }
-        
-    //     const ssize_t res = splice(sock, NULL, file_fd, NULL, file_data.host_file_size, 0);
-    //     if(res < 0) {
-    //         perror("Failed to receive file data");
-    //     } else if((size_t)res != file_data.host_file_size) {
-    //         perror("Incomplete file transfer");
-    //     }
-    //     printf("Successfuly received file");
-    //     close(file_fd);
-    // }
+    size_t nread = 0;
+    off_t write_offset = 0;
+    while((size_t)write_offset < file_size) {
+        {
+            const ssize_t local_read = splice(sock, NULL, pipefd[1], NULL, file_size - nread, 0);
+            if(local_read < 0) {
+                printf("[Failed to read splice] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+                return;
+            }
+            nread += (size_t)local_read;
+        }
+        {
+            const ssize_t local_write = splice(pipefd[0], NULL, file_fd, &write_offset, file_size - (size_t)write_offset, 0);
+            if(local_write < 0) {
+                printf("[Failed to write splice] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+                return;
+            }
+        }
+    }
+    close(file_fd);
+    printf("[finished receiving file file]\n");
 }
 
 int main(const int argc, char *argv[]) {
