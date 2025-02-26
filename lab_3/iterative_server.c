@@ -52,15 +52,15 @@ static void inner_function(const int listenfd, const IterativeServerConfig *cons
         perror("listen");
         return;
     }
-    printf("Server listening on %s:%d\n", config->address, config->port);
-    while (true) {
+    printf("[Server listening on %s:%d]\n", config->address, config->port);
+    while (keep_running) {
         struct sockaddr_in client_in;
         socklen_t addrlen = sizeof(client_in);
         const int connection_fd = accept(listenfd, (struct sockaddr *)&client_in, &addrlen);
         if (connection_fd < 0) {
             continue;
         }
-        printf("New connection from %s:%d\n", inet_ntoa(client_in.sin_addr), ntohs(client_in.sin_port));
+        printf("[New connection from %s:%d]\n", inet_ntoa(client_in.sin_addr), ntohs(client_in.sin_port));
         handle_client(connection_fd, config->dir_path);
         close(connection_fd);
     }

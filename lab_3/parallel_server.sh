@@ -1,0 +1,1 @@
+./build/parallel_server.o 0.0.0.0 55001 ..

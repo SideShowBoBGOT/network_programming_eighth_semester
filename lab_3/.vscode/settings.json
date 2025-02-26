@@ -5,6 +5,14 @@
         "stat.h": "c",
         "unistd.h": "c",
         "typeinfo": "cpp",
-        "in.h": "c"
+        "in.h": "c",
+        "stdlib.h": "c",
+        "errno.h": "c",
+        "iterative_server_utils.h": "c",
+        "socket.h": "c",
+        "wait.h": "c",
+        "signal.h": "c",
+        "sig_atomic_t.h": "c",
+        "signum-generic.h": "c"
     }
 }

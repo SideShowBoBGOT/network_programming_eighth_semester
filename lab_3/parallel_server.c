@@ -1,103 +1,149 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+#define __USE_POSIX
+#include <signal.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <errno.h>
-#include <signal.h>
-#include <stdint.h>
+#include <err.h>
+#include "iterative_server_utils.h"
 
-#include <parallel_server_utils/parallel_server_utils.h>
-#include <iterative_server_utils/iterative_server_utils.h>
+typedef struct {
+    IterativeServerConfig config;
+    size_t max_children;
+} ParallelServerConfig;
 
-static void handle_child_process(const int listenfd, const int connfd, const char* const dir_path) {
-    if (close(listenfd) < 0)
-        exit_err("close()");
-    handle_client(connfd, dir_path);
-    close(connfd);
-    exit(EXIT_SUCCESS);
+static void print_config(const ParallelServerConfig *config) {
+    printf("Server Configuration:\n");
+    printf("  Address: %s\n", config->config.address);
+    printf("  Port: %d\n", config->config.port);
+    printf("  Directory Path: %s\n", config->config.dir_path);
+    printf("  Maximum Children: %zu\n", config->max_children);
 }
 
-static void handle_parent_process(const int connfd, int* active_children) {
-    if (close(connfd) < 0)
-        warn_err("close()");
-    (*active_children)++;
-    printf("Working child processes: %d\n", *active_children);
+static ParallelServerConfig handle_cmd_args(const int argc, const char **argv) {
+    if (argc != 5) {
+        fprintf(stderr, "Usage: %s <server_address> <server_port> <directory_path> <max_children>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    const ParallelServerConfig config = {
+        .config.address = argv[1],
+        .config.port = (uint16_t)atoi(argv[2]),
+        .config.dir_path = argv[3],
+        .max_children = (size_t)atoi(argv[4])
+    };
+
+    print_config(&config);
+
+    return config;
 }
 
-volatile sig_atomic_t keep_running = 1;
+static bool keep_running = 1;
+static size_t active_children = 0;
 
-static void handle_sigint(const int) {
+static void handle_sigint(const int value __attribute__((unused))) {
     keep_running = 0;
 }
 
-static void reap_child_processes(int* active_children) {
-    while (1) {
+static void wait_finish_child_processes(void) {
+    while (true) {
         const pid_t pid = waitpid(-1, NULL, WNOHANG);
         switch (pid) {
             case -1: {
-                if (errno != ECHILD)
-                    exit_err("waitpid()");
+                if (errno != ECHILD) {
+                    warn("[Failed waitpid]");
+                }
                 return;
             }
             case 0: {
                 return;
             }
             default: {
-                printf("Process %jd exited\n", (intmax_t)pid);
-                (*active_children)--;
+                printf("[Process %jd exited]\n", (intmax_t)pid);
+                active_children--;
             }
-        }
+        }    
     }
 }
 
-static void wait_finish_child_processes(int* active_children) {
-    while (1) {
-        const pid_t pid = waitpid(-1, NULL, WNOHANG);
-        if(pid == -1)
-            break;
-        if(pid > 0) {
-            printf("Process %jd exited\n", (intmax_t)pid);
-            (*active_children)--;
-        }
-    }
-    if (errno != ECHILD)
-        exit_err("waitpid()");
+static void handle_sigchld(const int value __attribute__((unused))) {
+    wait_finish_child_processes();
 }
 
-static void run_server(const ParallelServerConfig *config) {
-    const int listenfd = create_and_bind_socket(config->config.port, config->config.address);
-    int active_children = 0;
-    signal(SIGINT, handle_sigint);
+#define MAX_BACKLOG 10
+
+static void socketfd_valid(const ParallelServerConfig *config, const int socketfd) {
+    {
+        const struct sockaddr_in srv_sin4 = {
+            .sin_family  = AF_INET,
+            .sin_port = htons(config->config.port),
+            .sin_addr.s_addr = inet_addr(config->config.address)
+        };
+        if(bind(socketfd, (const struct sockaddr *)&srv_sin4, sizeof(srv_sin4)) < 0) {
+            perror("bind failed");
+            return;
+        }
+    }
+    if(listen(socketfd, MAX_BACKLOG) < 0) {
+        perror("listen");
+        return;
+    }
+    printf("Server listening on %s:%d\n", config->config.address, config->config.port);
+
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGCHLD);
+    sigprocmask(SIG_BLOCK, &set, NULL);
 
     while(keep_running) {
-        reap_child_processes(&active_children);
-
-        const int connfd = accept_connection(listenfd);
-        if (connfd < 0)
-            continue;
-
-        if (active_children >= config->max_children) {
-            printf("No processes available\n");
+        const int connection_fd = accept(socketfd, NULL, NULL);
+        if(connection_fd < 0) {
             continue;
         }
-
-        pid_t pid = fork();
-        if (pid < 0) {
-            warn_err("fork()");
+        
+        const pid_t pid = fork();
+        if(pid < 0) {
+            perror("[Failed to fork]");
         } else if (pid == 0) {
-            handle_child_process(listenfd, connfd, config->config.dir_path);
+            handle_client(connection_fd, config->config.dir_path);
+            goto exit_label;
         } else {
-            handle_parent_process(connfd, &active_children);
+            active_children++;
+            while(active_children == config->max_children) {
+                sigsuspend()
+            }
+        }
+
+        if(not close(connection_fd)) {
+            warn("[Failed to close connection_fd: %d]", connection_fd);
         }
     }
-    wait_finish_child_processes(&active_children);
-
-    close(listenfd);
+    wait_finish_child_processes();
+    exit_label:;
 }
 
-int main(const int argc, char *argv[]) {
+int main(const int argc, const char *argv[]) {
+    if(signal(SIGINT, handle_sigint) == SIG_ERR) {
+        warn("Failed to establish signal handler for SIGINT");
+        return EXIT_FAILURE;
+    }
+    if(signal(SIGCHLD, handle_sigchld) == SIG_ERR) {
+        warn("Failed to establish signal handler for SIGCHLD");
+        return EXIT_FAILURE;
+    }
     const ParallelServerConfig config = handle_cmd_args(argc, argv);
-    run_server(&config);
+    const int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket_fd < 0) {
+        perror("socket failed");
+        return EXIT_FAILURE;
+    }
+    socketfd_valid(&config, socket_fd);
+    if(not close(socket_fd)) {
+        warn("[Can not close socket_fd: %d]", socket_fd);
+        exit(EXIT_FAILURE);
+    }
     return EXIT_SUCCESS;
 }
