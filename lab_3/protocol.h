@@ -24,7 +24,9 @@
 
 #define ARRAY_SIZE(data) sizeof((data)) / sizeof(data[0])
 
-static bool readn(const int fd, void *const vptr, const size_t n, size_t *nread) {
+#define ASSERT_POSIX(expression) assert((expression) != -1)
+
+static bool checked_read(const int fd, void *const vptr, const size_t n, size_t *nread) {
     if(nread == NULL) {
         nread = alloca(sizeof(*nread));
     }
@@ -46,7 +48,7 @@ static bool readn(const int fd, void *const vptr, const size_t n, size_t *nread)
     return true;
 }
 
-static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrite) {
+static bool checked_write(const int fd, const void *vptr, const size_t n, size_t *nwrite) {
     if(nwrite == NULL) {
         nwrite = alloca(sizeof(*nwrite));
     }
@@ -64,7 +66,7 @@ static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrit
     return true;
 }
 
-static bool closen(const int fd) {
+static bool checked_close(const int fd) {
     while(close(fd) == -1) {
         if(errno == EINTR) {
             continue;

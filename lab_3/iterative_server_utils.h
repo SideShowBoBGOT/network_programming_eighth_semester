@@ -50,27 +50,27 @@ static void with_file_open(
     if(fstat(fd, &st) == -1) {
         printf("[Client_sock: %d] [Error stat: %s] [errno: %d] [strerror: %s]\n", client_sock, buffer, errno, strerror(errno));
         const bool is_file_size_ok = false;
-        if(not writen(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
+        if(not checked_write(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
             printf("[Client_sock: %d] [Failed to inform file size not ok: %s] [errno: %d] [strerror: %s]\n", client_sock, buffer, errno, strerror(errno));
         }
         return;
     }
     {
         const bool is_file_size_ok = true;
-        if(not writen(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
+        if(not checked_write(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
             printf("[Client_sock: %d] [Failed to inform failure file size ok] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
             return;
         }
     }
     {
         const size_t network_file_size = htobe64((size_t)st.st_size);
-        if(not writen(client_sock, &network_file_size, sizeof(network_file_size), NULL)) {
+        if(not checked_write(client_sock, &network_file_size, sizeof(network_file_size), NULL)) {
             printf("[Client_sock: %d] [Failed to send file size] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
             return;
         }
     }
     bool is_client_ready;
-    if(not readn(client_sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
+    if(not checked_read(client_sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
         printf("[Client_sock: %d] [Failed to receive clients file approval] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
         return;
     }
@@ -102,14 +102,14 @@ static void handle_client(
     {
         printf("[Client_sock: %d] [Start handling client]\n", client_sock);
         uint8_t client_protocol_version;
-        if(not readn(client_sock, &client_protocol_version, sizeof(client_protocol_version), NULL)) {
+        if(not checked_read(client_sock, &client_protocol_version, sizeof(client_protocol_version), NULL)) {
             printf("[Client_sock: %d] [Failed to receive request] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
             return;
         }
         printf("[Client_sock: %d] [Client protocol version: %d]\n", client_sock, client_protocol_version);
         {
             const bool is_protocol_match = client_protocol_version == PROTOCOL_VERSION;
-            if(not writen(client_sock, &is_protocol_match, sizeof(is_protocol_match), NULL)) {
+            if(not checked_write(client_sock, &is_protocol_match, sizeof(is_protocol_match), NULL)) {
                 printf("[Client_sock: %d] [Failed to send protocol match] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
                 return;
             }
@@ -122,7 +122,7 @@ static void handle_client(
     char *buffer;
     {
         filename_buff_t filename_buffer;
-        if(not readn(client_sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
+        if(not checked_read(client_sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
             printf("[Client_sock: %d] [Failed to read filename buffer] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
             return;
         }
@@ -130,7 +130,7 @@ static void handle_client(
         if(memchr(filename_buffer, '\0', ARRAY_SIZE(filename_buffer)) == NULL) {
             printf("[Client_sock: %d] [Error filename not valid]\n", client_sock);
             const bool is_file_size_ok = false;
-            if(not writen(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
+            if(not checked_write(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
                 printf("[Client_sock: %d] [Error filename not valid] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
             }
             return;
@@ -145,12 +145,12 @@ static void handle_client(
     if(fd == -1) {
         printf("[Client_sock: %d] [Error open file: %s] [errno: %d] [strerror: %s]\n", client_sock, buffer, errno, strerror(errno));
         const bool is_file_size_ok = false;
-        if(not writen(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
+        if(not checked_write(client_sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
             printf("[Client_sock: %d] [Failed to inform failure file size not ok] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
         }
     } else {
         with_file_open(fd, client_sock, buffer);
-        if(not closen(fd)) {
+        if(not checked_close(fd)) {
             printf("[Client_sock: %d] [Failed to close file] [errno: %d] [strerror: %s]\n", client_sock, errno, strerror(errno));
         }
     }

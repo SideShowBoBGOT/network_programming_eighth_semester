@@ -25,14 +25,9 @@ static void inner_function(const int listenfd, const IterativeServerConfig *cons
         .sin_port = htons(config->port),
         .sin_addr.s_addr = inet_addr(config->address)
     };
-    if(bind(listenfd, (struct sockaddr *)&srv_sin4, sizeof(srv_sin4)) < 0) {
-        perror("bind failed");
-        return;
-    }
-    if(listen(listenfd, MAX_BACKLOG) < 0) {
-        perror("listen");
-        return;
-    }
+    ASSERT_POSIX(bind(listenfd, (struct sockaddr *)&srv_sin4, sizeof(srv_sin4)));
+    ASSERT_POSIX(listen(listenfd, MAX_BACKLOG));
+
     printf("[Server listening on %s:%d]\n", config->address, config->port);
     while (keep_running) {
         struct sockaddr_in client_in;
@@ -43,32 +38,25 @@ static void inner_function(const int listenfd, const IterativeServerConfig *cons
         }
         printf("[New connection from %s:%d]\n", inet_ntoa(client_in.sin_addr), ntohs(client_in.sin_port));
         handle_client(connection_fd, config->dir_path);
-        if(not closen(connection_fd)) {
+        if(not checked_close(connection_fd)) {
             printf("[Failed to close client connection: %d]\n", connection_fd);
         }
     }
 }
 
-
-
 int main(const int argc, char *argv[]) {
     {
         struct sigaction sa;
         sa.sa_handler = handle_sigint;
-        assert(sigemptyset(&sa.sa_mask) != -1);
+        ASSERT_POSIX(sigemptyset(&sa.sa_mask));
         sa.sa_flags = 0;
-        assert(sigaction(SIGINT, &sa, NULL) != -1);
+        ASSERT_POSIX(sigaction(SIGINT, &sa, NULL));
     }
 
     const IterativeServerConfig config = handle_cmd_args(argc, argv);
     const int listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listenfd < 0) {
-        perror("socket failed");
-        return EXIT_FAILURE;
-    }
+    ASSERT_POSIX(listenfd);
     inner_function(listenfd, &config);
-    if(not closen(listenfd)) {
-        printf("[Failed to close listenfd: %d]\n", listenfd);
-    }
+    assert(checked_close(listenfd));
     return EXIT_SUCCESS;
 }
