@@ -12,12 +12,12 @@
 
 typedef struct {
     IterativeServerConfig config;
-    size_t max_children;
+    int32_t max_children;
 } ParallelServerConfig;
 
 static void parallel_server_print_config(const ParallelServerConfig *config) {
     iterative_server_print_config(&config->config);
-    printf("\tMaximum Children: %zu\n", config->max_children);
+    printf("\tMaximum Children: %d\n", config->max_children);
 }
 
 static ParallelServerConfig handle_cmd_args(const int argc, const char **argv) {
@@ -30,16 +30,16 @@ static ParallelServerConfig handle_cmd_args(const int argc, const char **argv) {
         .config.address = argv[1],
         .config.port = (uint16_t)atoi(argv[2]),
         .config.dir_path = argv[3],
-        .max_children = (size_t)atoi(argv[4])
+        .max_children = atoi(argv[4])
     };
-
+    assert(config.max_children > 0);
     parallel_server_print_config(&config);
     return config;
 }
 
 static atomic_int active_children = 0;
 
-static void wait_finish_child_processes() {
+static void wait_finish_child_processes(void) {
     while (true) {
         const pid_t pid = waitpid(-1, NULL, WNOHANG);
         switch (pid) {
@@ -99,7 +99,7 @@ static void socketfd_valid(const ParallelServerConfig *config, const int socketf
             return;
         } else {
             atomic_fetch_add(&active_children, 1);
-            while(active_children == config->max_children) {
+            while(atomic_fetch_add(&active_children, 0) == config->max_children) {
                 sigsuspend(&sigcld_unblock_mask);
             }
         }

@@ -17,7 +17,7 @@
 #include <alloca.h>
 #include <signal.h>
 
-#include "protocol.h"
+#include "utils.h"
 
 typedef struct {
     const char *address;
@@ -27,9 +27,9 @@ typedef struct {
 
 static void iterative_server_print_config(const IterativeServerConfig *config) {
     printf("Server Configuration:\n");
-    printf("Address: %s\n", config->address);
-    printf("Port: %d\n", config->port);
-    printf("Directory Path: %s\n", config->dir_path);
+    printf("\tAddress: %s\n", config->address);
+    printf("\tPort: %d\n", config->port);
+    printf("\tDirectory Path: %s\n", config->dir_path);
 }
 
 static volatile sig_atomic_t keep_running = true;
@@ -79,7 +79,7 @@ static void with_file_open(
         return;
     }
     
-    printf("[Client_sock: %d] Ready to send file]\n", client_sock);
+    printf("[Client_sock: %d] [Ready to send file]\n", client_sock);
     {
         off_t offset = 0;
         while(offset < st.st_size) {
