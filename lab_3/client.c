@@ -9,7 +9,7 @@
 #include <sys/stat.h> 
 #include <fcntl.h>
 #include <netinet/in.h>
-#include "utils.h"
+#include "client_utils.h"
 
 typedef struct {
     const char *address;

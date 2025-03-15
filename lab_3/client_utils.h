@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <iso646.h>
 #include <assert.h>
+#include <stdbool.h>
 
 
 #define ALWAYS_INLINE static inline __attribute((always_inline))

@@ -1,4 +1,4 @@
-#include "iterative_server_utils.h"
+#include "iterative_server_utils_two.h"
 
 #include <signal.h>
 
@@ -29,19 +29,7 @@ static void inner_function(const int listenfd, const IterativeServerConfig *cons
     ASSERT_POSIX(listen(listenfd, MAX_BACKLOG));
 
     printf("[Server listening on %s:%d]\n", config->address, config->port);
-    while (keep_running) {
-        struct sockaddr_in client_in;
-        socklen_t addrlen = sizeof(client_in);
-        const int connection_fd = accept(listenfd, (struct sockaddr *)&client_in, &addrlen);
-        if (connection_fd < 0) {
-            continue;
-        }
-        printf("[New connection from %s:%d]\n", inet_ntoa(client_in.sin_addr), ntohs(client_in.sin_port));
-        handle_client(connection_fd, config->dir_path);
-        if(not checked_close(connection_fd)) {
-            printf("[Failed to close client connection: %d]\n", connection_fd);
-        }
-    }
+    iterative_server_main_loop(listenfd, config->dir_path);
 }
 
 int main(const int argc, char *argv[]) {
