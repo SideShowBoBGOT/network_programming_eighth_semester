@@ -20,10 +20,10 @@ typedef struct {
 
 static void print_config(const ClientConfig *config) {
     printf("Client Configuration:\n");
-    printf("  Address: %s\n", config->address);
-    printf("  Port: %d\n", config->port);
-    printf("  Filename: %s\n", config->filename);
-    printf("  Maximum Children: %ld\n", config->max_file_size);
+    printf("\tAddress: %s\n", config->address);
+    printf("\tPort: %d\n", config->port);
+    printf("\tFilename: %s\n", config->filename);
+    printf("\tMaximum file size: %ld\n", config->max_file_size);
 }
 
 static ClientConfig handle_cmd_args(const int argc, char **argv) {
@@ -37,9 +37,7 @@ static ClientConfig handle_cmd_args(const int argc, char **argv) {
         .filename = argv[3],
         .max_file_size = (uint64_t)atoi(argv[4])
     };
-
     print_config(&config);
-
     return config;
 }
 
@@ -148,12 +146,7 @@ static void main_logic(const ClientConfig *const config, const int sock) {
         if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
             printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
         }
-        return;
-    }
-    DEFER(
-        close(pipefd[0]);
-        close(pipefd[1]);
-    ) {
+    } else {
         const int file_fd = open(config->filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if(file_fd < 0) {
             const bool is_client_ready = false;
@@ -162,16 +155,21 @@ static void main_logic(const ClientConfig *const config, const int sock) {
                 printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
             }
         } else {
-            DEFER(
-                close(file_fd);
-            ) {
-                const bool is_client_ready = true;
-                if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
-                    printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
-                } else {
-                    receive_file(sock, file_size, pipefd[0], pipefd[1], file_fd);
-                }
+            const bool is_client_ready = true;
+            if(not writen(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
+                printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
+            } else {
+                receive_file(sock, file_size, pipefd[0], pipefd[1], file_fd);
             }
+            if(not closen(file_fd)) {
+                printf("[Failed to close file] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            }
+        }
+        if(not closen(pipefd[0])) {
+            printf("[Failed to close pipe 0] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+        }
+        if(not closen(pipefd[1])) {
+            printf("[Failed to close pipe 1] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
         }
     }
 }

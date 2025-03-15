@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#define __USE_POSIX
 #include <signal.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -15,12 +14,9 @@ typedef struct {
     size_t max_children;
 } ParallelServerConfig;
 
-static void print_config(const ParallelServerConfig *config) {
-    printf("Server Configuration:\n");
-    printf("  Address: %s\n", config->config.address);
-    printf("  Port: %d\n", config->config.port);
-    printf("  Directory Path: %s\n", config->config.dir_path);
-    printf("  Maximum Children: %zu\n", config->max_children);
+static void parallel_server_print_config(const ParallelServerConfig *config) {
+    iterative_server_print_config(&config->config);
+    printf("\tMaximum Children: %zu\n", config->max_children);
 }
 
 static ParallelServerConfig handle_cmd_args(const int argc, const char **argv) {
@@ -36,17 +32,12 @@ static ParallelServerConfig handle_cmd_args(const int argc, const char **argv) {
         .max_children = (size_t)atoi(argv[4])
     };
 
-    print_config(&config);
+    parallel_server_print_config(&config);
 
     return config;
 }
 
-static bool keep_running = 1;
-static size_t active_children = 0;
-
-static void handle_sigint(const int value __attribute__((unused))) {
-    keep_running = 0;
-}
+static volatile sig_atomic_t active_children = 0;
 
 static void wait_finish_child_processes(void) {
     while (true) {
@@ -73,7 +64,6 @@ static void handle_sigchld(const int value __attribute__((unused))) {
     wait_finish_child_processes();
 }
 
-#define MAX_BACKLOG 10
 
 static void socketfd_valid(const ParallelServerConfig *config, const int socketfd) {
     {
@@ -126,6 +116,14 @@ static void socketfd_valid(const ParallelServerConfig *config, const int socketf
 }
 
 int main(const int argc, const char *argv[]) {
+    {
+        struct sigaction sa;
+        sa.sa_handler = handle_sigint;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        sigaction(SIGINT, &sa, NULL);
+    }
+    
     if(signal(SIGINT, handle_sigint) == SIG_ERR) {
         warn("Failed to establish signal handler for SIGINT");
         return EXIT_FAILURE;
@@ -134,6 +132,8 @@ int main(const int argc, const char *argv[]) {
         warn("Failed to establish signal handler for SIGCHLD");
         return EXIT_FAILURE;
     }
+
+
     const ParallelServerConfig config = handle_cmd_args(argc, argv);
     const int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (socket_fd < 0) {

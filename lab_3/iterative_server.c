@@ -1,17 +1,6 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <signal.h>
 #include "iterative_server_utils.h"
 
-static void print_config(const IterativeServerConfig *config) {
-    printf("Server Configuration:\n");
-    printf("  Address: %s\n", config->address);
-    printf("  Port: %d\n", config->port);
-    printf("  Directory Path: %s\n", config->dir_path);
-}
+#include <signal.h>
 
 static IterativeServerConfig handle_cmd_args(const int argc, char **argv) {
     if (argc != 4) {
@@ -25,17 +14,10 @@ static IterativeServerConfig handle_cmd_args(const int argc, char **argv) {
         .dir_path = argv[3],
     };
 
-    print_config(&config);
+    iterative_server_print_config(&config);
 
     return config;
 }
-
-static volatile sig_atomic_t keep_running = 1;
-static void handle_sigint(const int val __attribute__((unused))) {
-    keep_running = 0;
-}
-
-#define MAX_BACKLOG 10
 
 static void inner_function(const int listenfd, const IterativeServerConfig *const config) {
     struct sockaddr_in srv_sin4 = {
@@ -47,7 +29,6 @@ static void inner_function(const int listenfd, const IterativeServerConfig *cons
         perror("bind failed");
         return;
     }
-
     if(listen(listenfd, MAX_BACKLOG) < 0) {
         perror("listen");
         return;
@@ -62,12 +43,23 @@ static void inner_function(const int listenfd, const IterativeServerConfig *cons
         }
         printf("[New connection from %s:%d]\n", inet_ntoa(client_in.sin_addr), ntohs(client_in.sin_port));
         handle_client(connection_fd, config->dir_path);
-        close(connection_fd);
+        if(not closen(connection_fd)) {
+            printf("[Failed to close client connection: %d]\n", connection_fd);
+        }
     }
 }
 
+
+
 int main(const int argc, char *argv[]) {
-    signal(SIGINT, handle_sigint);
+    {
+        struct sigaction sa;
+        sa.sa_handler = handle_sigint;
+        assert(sigemptyset(&sa.sa_mask) != -1);
+        sa.sa_flags = 0;
+        assert(sigaction(SIGINT, &sa, NULL) != -1);
+    }
+
     const IterativeServerConfig config = handle_cmd_args(argc, argv);
     const int listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listenfd < 0) {
@@ -75,6 +67,8 @@ int main(const int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     inner_function(listenfd, &config);
-    close(listenfd);
+    if(not closen(listenfd)) {
+        printf("[Failed to close listenfd: %d]\n", listenfd);
+    }
     return EXIT_SUCCESS;
 }

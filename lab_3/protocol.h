@@ -23,8 +23,6 @@
 #define UNIQUE_NAME(prefix) UNIQUE_NAME_COUNTER(UNIQUE_NAME_LINE(prefix))
 
 #define ARRAY_SIZE(data) sizeof((data)) / sizeof(data[0])
-#define DEFER(block) for(char UNIQUE_NAME_LINE(flag) = 1; UNIQUE_NAME_LINE(flag); UNIQUE_NAME_LINE(flag) = 0, ({block}))
-
 
 static bool readn(const int fd, void *const vptr, const size_t n, size_t *nread) {
     if(nread == NULL) {
@@ -66,5 +64,15 @@ static bool writen(const int fd, const void *vptr, const size_t n, size_t *nwrit
     return true;
 }
 
-#define PROTOCOL_VERSION 17
+static bool closen(const int fd) {
+    while(close(fd) == -1) {
+        if(errno == EINTR) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+enum { PROTOCOL_VERSION = 17 };
 typedef char filename_buff_t[255];
