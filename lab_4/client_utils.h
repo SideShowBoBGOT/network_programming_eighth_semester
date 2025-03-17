@@ -12,6 +12,7 @@
 #include <iso646.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <linux/limits.h>
 
 
 #define ALWAYS_INLINE static inline __attribute((always_inline))
@@ -77,10 +78,5 @@ static bool checked_close(const int fd) {
     return true;
 }
 
-enum { PROTOCOL_VERSION = 17 };
-typedef char filename_buff_t[255];
-
-typedef struct {
-    uint16_t chunk_size;
-    off_t file_size;
-} ChunkAndFileSize;
+static const uint8_t PROTOCOL_VERSION = 17;
+static const uint16_t CHUNK_SIZE = 4096;
