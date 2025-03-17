@@ -26,7 +26,7 @@
 
 #define ARRAY_SIZE(data) (sizeof((data)) / sizeof(data[0]))
 
-#define ASSERT_POSIX(expression) assert((expression) != -1)
+#define ASSERT_POSIX(expression) assert((expression) != (__typeof__((expression)))-1)
 
 static bool checked_read(const int fd, void *const vptr, const size_t n, size_t *nread) {
     if(nread == NULL) {

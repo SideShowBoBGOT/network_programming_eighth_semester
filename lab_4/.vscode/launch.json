@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+            "name": "multiplex server",
+            "type": "cppdbg",
+            "request": "launch",
+            "cwd": ".",
+            "args": ["0.0.0.0", "55001", "..", "10"],
+            "program": "${workspaceRoot}/build/multiplex_server.o",
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "showDisplayString": true
+        }          
+    ]
+}

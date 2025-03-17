@@ -1,0 +1,9 @@
+{
+    "makefile.launchConfigurations": [
+        {
+            "cwd": "/home/sideshowbobgot/university/network_programming_eighth_semester/lab_4/build",
+            "binaryPath": "/home/sideshowbobgot/university/network_programming_eighth_semester/lab_4/build/multiplex_server.o",
+            "binaryArgs": []
+        }
+    ]
+}

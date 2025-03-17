@@ -66,7 +66,13 @@ typedef struct {
     } value;
 } ClientState;
 
-static ClientState construct_drop_connection(const int32_t client_fd) {
+typedef uint16_t clients_count_t;
+
+static ClientState construct_drop_connection(
+    clients_count_t *const clients_count,
+    const int32_t client_fd
+) {
+    --(*clients_count);
     checked_close(client_fd);
     ClientState state;
     state.tag = ClientStateTag_INVALID;
@@ -74,6 +80,7 @@ static ClientState construct_drop_connection(const int32_t client_fd) {
 }
 
 static ClientState ClientState_transition(
+    clients_count_t *const clients_count,
     const ClientState* const state,
     const fd_set* const readfds,
     const fd_set* const writefds,
@@ -94,7 +101,7 @@ static ClientState ClientState_transition(
             if(
                 not checked_read(cur_state->client_fd, &client_protocol_version, sizeof(client_protocol_version), NULL)
             ) {
-                return construct_drop_connection(cur_state->client_fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
             }
 
             ClientState new_state;
@@ -110,10 +117,10 @@ static ClientState ClientState_transition(
             }
             const bool is_protocol_match = cur_state->client_protocol_version == PROTOCOL_VERSION;
             if(not checked_write(cur_state->client_fd, &is_protocol_match, sizeof(is_protocol_match), NULL)) {
-                return construct_drop_connection(cur_state->client_fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
             }
             if(not is_protocol_match) {
-                return construct_drop_connection(cur_state->client_fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
             }
             ClientState new_state;
             new_state.tag = ClientStateTag_RECEIVE_FILE_NAME;
@@ -126,7 +133,7 @@ static ClientState ClientState_transition(
                 return *state;
             }
             if(not checked_read(cur_state->client_fd, filepath_buffer + filepath_buffer_len_with_slash, NAME_MAX, NULL)) {
-                return construct_drop_connection(cur_state->client_fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
             }
             ClientState new_state;
             new_state.tag = ClientStateTag_SEND_MATCH_PROTOCOL_VERSION;
@@ -142,14 +149,14 @@ static ClientState ClientState_transition(
             bool is_possible = cur_state->client_fd != -1;
             if(not is_possible) {
                 checked_write(cur_state->client_fd, &is_possible, sizeof(is_possible), NULL);
-                return construct_drop_connection(cur_state->client_fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
             }
             struct stat st;
             is_possible = fstat(cur_state->client_fd, &st) != -1; 
             if(not is_possible) {
                 checked_write(cur_state->client_fd, &is_possible, sizeof(is_possible), NULL);
                 checked_close(cur_state->fd);
-                return construct_drop_connection(cur_state->client_fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
             }
             checked_write(cur_state->client_fd, &is_possible, sizeof(is_possible), NULL);
 
@@ -183,7 +190,7 @@ static ClientState ClientState_transition(
             bool is_client_ready;
             if(not checked_read(cur_state->client_fd, &is_client_ready, is_client_ready, NULL) || not is_client_ready) {
                 checked_close(cur_state->fd);
-                return construct_drop_connection(cur_state->client_fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
             }
 
             ClientState new_state;
@@ -205,7 +212,7 @@ static ClientState ClientState_transition(
             while(true) {
                 if(new_cur_state->file_offset >= new_cur_state->file_size) {
                     checked_close(new_cur_state->fd);
-                    return construct_drop_connection(new_cur_state->client_fd);
+                    return construct_drop_connection(clients_count, new_cur_state->client_fd);
                 }
                 const off_t diff_offset = CHUNK_SIZE - (new_cur_state->file_offset - old_offset);
                 if(diff_offset <= 0) {
@@ -216,26 +223,29 @@ static ClientState ClientState_transition(
             }            
             return new_generic_state;
         }
+        default: {
+            __builtin_unreachable();
+        }
     }
 }
 
 static volatile sig_atomic_t keep_running = 1;
-static void handle_sigint(const int) { keep_running = 0; }
+static void handle_sigint(const int value __attribute_maybe_unused__) { keep_running = 0; }
 
 static in_addr_t parse_address(const char *const value) {
     const in_addr_t address = inet_addr(value);
-    assert(address);
+    ASSERT_POSIX(address);
     return address;
 }
-static uint32_t parse_port(const char *const value) {
+static in_port_t parse_port(const char *const value) {
     errno = 0;
-    const uint32_t port = strtoul(value, NULL, 10);
+    const uint64_t port = strtoul(value, NULL, 10);
     assert(errno == 0);
-    assert(port == (long)((in_port_t)port));
+    assert(port == (uint64_t)((in_port_t)port));
     return (in_port_t)port;
 }
 static uint16_t parse_max_clients_count(const char *const value) {
-    const uint32_t max_clients_count = strtoul(value, NULL, 10);
+    const uint64_t max_clients_count = strtoul(value, NULL, 10);
     assert(errno == 0);
     static const uint16_t FD_SETSIZE_ACCOUNTING_FOR_SERVER_FD = FD_SETSIZE - 1;
     assert(max_clients_count <= FD_SETSIZE_ACCOUNTING_FOR_SERVER_FD);
@@ -243,6 +253,9 @@ static uint16_t parse_max_clients_count(const char *const value) {
 }
 static int32_t ClientState_client_fd(const ClientState *const state) {
     switch(state->tag) {
+        case ClientStateTag_INVALID: {
+            __builtin_unreachable();
+        }
         case ClientStateTag_RECEIVE_PROTOCOL_VERSION: {
             return state->value.receive_protocol_version.client_fd;
         }
@@ -269,8 +282,6 @@ static int32_t ClientState_client_fd(const ClientState *const state) {
         }
     }
 }
-
-typedef uint16_t clients_count_t;
 
 static int init_file_descriptors(
     fd_set *readfds,
@@ -326,7 +337,7 @@ int main(
     uint16_t filepath_buffer_len_with_slash;
     {
         static const uint8_t slash_character_addition = 1;
-        const size_t len_with_slash = strlen(argv[3]) + 1;
+        const size_t len_with_slash = strlen(argv[3]) + slash_character_addition;
         assert((len_with_slash + NAME_MAX) <= PATH_MAX);
         filepath_buffer_len_with_slash = (uint16_t)len_with_slash;
         strcpy(filepath_buffer, argv[3]);
@@ -369,14 +380,15 @@ int main(
                 if (client_state_array[i].tag == ClientStateTag_INVALID) {
                     client_state_array[i].tag = ClientStateTag_RECEIVE_PROTOCOL_VERSION;
                     client_state_array[i].value.receive_protocol_version.client_fd = client_fd;
+                    ++clients_count;
                     break;
                 }
             }
         }
 
-        for(size_t i = 0; i < max_clients_count; ++i) {
+        for(size_t i = 0; i < clients_count; ++i) {
             ClientState* state = &client_state_array[i];
-            *state = ClientState_transition(state, &readfds, &writefds, filepath_buffer, filepath_buffer_len_with_slash);
+            *state = ClientState_transition(&clients_count, state, &readfds, &writefds, filepath_buffer, filepath_buffer_len_with_slash);
         }
     }
 

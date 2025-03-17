@@ -1,0 +1,1 @@
+./build/client.o 0.0.0.0 55002 some.c 100000
