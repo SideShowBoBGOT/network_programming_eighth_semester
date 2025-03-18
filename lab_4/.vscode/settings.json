@@ -5,5 +5,8 @@
             "binaryPath": "/home/sideshowbobgot/university/network_programming_eighth_semester/lab_4/build/multiplex_server.o",
             "binaryArgs": []
         }
-    ]
+    ],
+    "files.associations": {
+        "client_utils.h": "c"
+    }
 }

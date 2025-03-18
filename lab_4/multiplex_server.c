@@ -19,6 +19,8 @@
 
 #include "client_utils.h"
 
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+
 typedef enum {
     ClientStateTag_INVALID,
     ClientStateTag_RECEIVE_PROTOCOL_VERSION,
@@ -235,26 +237,29 @@ static ClientState ClientState_transition(
                 return new_generic_state;
             }
             printf("[client_fd: %d] [ClientStateTag_SEND_CHUNK]\n", new_cur_state->client_fd);
+            const off_t end_offset = MIN(new_cur_state->file_size, new_cur_state->file_offset + CHUNK_SIZE);
 
-            const off_t old_offset = new_cur_state->file_offset;
             while(true) {
-                printf("[client_fd: %d] [new_cur_state->file_offset: %ld]\n", new_cur_state->client_fd, new_cur_state->file_offset);
-                if(new_cur_state->file_offset >= new_cur_state->file_size) {
+                if(new_cur_state->file_size <= new_cur_state->file_offset) {
                     checked_close(new_cur_state->fd);
                     new_generic_state.tag = ClientStateTag_RECEIVE_FINISH;
                     new_generic_state.value.receive_finish.client_fd = state->value.send_chunk.client_fd;
                     return new_generic_state;
                 }
-                const off_t diff_offset = CHUNK_SIZE - (new_cur_state->file_offset - old_offset);
-                if(diff_offset <= 0) {
+                const off_t local_diff = end_offset - new_cur_state->file_offset;
+                if(local_diff <= 0) {
                     break;
                 }
-                const ssize_t nsendfile = sendfile(new_cur_state->client_fd, new_cur_state->fd, &new_cur_state->file_offset, (size_t)diff_offset);
+                // printf("[client_fd: %d] [pre new_cur_state->file_offset: %ld]\n", new_cur_state->client_fd, new_cur_state->file_offset);
+
+                const ssize_t nsendfile = sendfile(new_cur_state->client_fd, new_cur_state->fd, &new_cur_state->file_offset, (size_t)(local_diff));
                 if(nsendfile == -1) {
                     printf("[Failed to sendfile] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
                     break;
                 }
-            }            
+                // printf("[client_fd: %d] [post new_cur_state->file_offset: %ld]\n", new_cur_state->client_fd, new_cur_state->file_offset);
+            }
+            // printf("[client_fd: %d] [post cycle]\n", new_cur_state->client_fd);
             return new_generic_state;
         }
         case ClientStateTag_RECEIVE_FINISH: {
@@ -339,13 +344,13 @@ static int init_file_descriptors(
     fd_set *writefds,
     const int serverfd,
     const ClientState *const client_state_array,
-    const clients_count_t client_state_array_count
+    const clients_count_t max_clients_count
 ) {
     FD_ZERO(readfds);
     FD_ZERO(writefds);
     FD_SET(serverfd, readfds);
     int max_sd = serverfd;
-    for(size_t i = 0; i < client_state_array_count; ++i) {
+    for(size_t i = 0; i < max_clients_count; ++i) {
         const ClientState* state = &client_state_array[i];
         if(state->tag != ClientStateTag_INVALID) {
             const int client_fd = ClientState_client_fd(state);
@@ -405,37 +410,45 @@ int main(
     }
 
     while(keep_running) {
+        // printf("[main cycle start]\n");
         const int max_fd = init_file_descriptors(
-            &readfds, &writefds, listenfd, client_state_array, client_state_array_count
+            &readfds, &writefds, listenfd, client_state_array, max_clients_count
         );
+        // printf("[pre select] [max_fd: %d]\n", max_fd);
         if(select(max_fd + 1, &readfds, &writefds, NULL, NULL) == -1) {
-            printf("[select] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            // printf("[select] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             continue;
         }
-        // printf("[select triggered]\n");
-
-
+        // printf("[post select] [max_fd: %d]\n", max_fd);
         if(FD_ISSET(listenfd, &readfds) && client_state_array_count < max_clients_count) {
             struct sockaddr_in address;
             socklen_t addr_len = sizeof(address);
+            // printf("[pre accept]\n");
             const int client_fd = accept(listenfd, (struct sockaddr *)&address, &addr_len);
-            if (client_fd == -1) {
-                printf("[accept] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            // printf("[post accept]\n");
+            if(client_fd == -1) {
+                // printf("[accept] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
                 continue;
             }
-    
             printf("[New connection] [client_fd: %d] [IP: %s] [port: %d]\n",
                 client_fd, inet_ntoa(address.sin_addr), ntohs(address.sin_port));
             
-            client_state_array[client_state_array_count].tag = ClientStateTag_RECEIVE_PROTOCOL_VERSION;
-            client_state_array[client_state_array_count].value.receive_protocol_version.client_fd = client_fd;
-            ++client_state_array_count;
+            for(size_t i = 0; i < max_clients_count; ++i) {
+                ClientState* state = &client_state_array[i];
+                if(state->tag == ClientStateTag_INVALID) {
+                    state->tag = ClientStateTag_RECEIVE_PROTOCOL_VERSION;
+                    state->value.receive_protocol_version.client_fd = client_fd;
+                    ++client_state_array_count;
+                    break;
+                }
+            }
         }
 
-        for(size_t i = 0; i < client_state_array_count; ++i) {
+        for(size_t i = 0; i < max_clients_count; ++i) {
             ClientState* state = &client_state_array[i];
             *state = ClientState_transition(&client_state_array_count, state, &readfds, &writefds, filepath_buffer, filepath_buffer_offset);
         }
+        // printf("[main cycle end]\n");
     }
 
     free(client_state_array);

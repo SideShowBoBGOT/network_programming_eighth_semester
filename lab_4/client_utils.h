@@ -79,4 +79,4 @@ static bool checked_close(const int fd) {
 }
 
 static const uint8_t PROTOCOL_VERSION = 17;
-static const uint16_t CHUNK_SIZE = 4096;
+static const uint16_t CHUNK_SIZE = 100;

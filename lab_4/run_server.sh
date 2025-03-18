@@ -1,1 +1,1 @@
-./build/multiplex_server.o 0.0.0.0 55001 /home/sideshowbobgot/university/network_programming_eighth_semester 10
+./build/multiplex_server.o 0.0.0.0 55001 /home/sideshowbobgot/university/C 10
