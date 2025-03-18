@@ -85,7 +85,6 @@ static void main_logic(const ClientConfig *const config, const int sock) {
             return;
         }
     }
-    const size_t file_size = ({
         const uint8_t protocol_version = PROTOCOL_VERSION;
         if(not checked_write(sock, &protocol_version, sizeof(protocol_version), NULL)) {
             printf("[Failed to send protocol version] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
@@ -104,41 +103,43 @@ static void main_logic(const ClientConfig *const config, const int sock) {
             }
             printf("[Protocol version match]\n");
         }
-        filename_buff_t filename_buffer;
+        char filename_buffer[NAME_MAX];
         strncpy(filename_buffer, config->filename, ARRAY_SIZE(filename_buffer));
         if(not checked_write(sock, filename_buffer, ARRAY_SIZE(filename_buffer), NULL)) {
             printf("[Failed to send filename buffer] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             return;
         }
+        printf("[Send filename_buffer] [filename_buffer: %s]\n", filename_buffer);
         {
-            bool is_file_size_ok;
-            if(not checked_read(sock, &is_file_size_ok, sizeof(is_file_size_ok), NULL)) {
-                printf("[Failed to receive is_file_size_ok] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+            bool is_file_operation_possible;
+            if(not checked_read(sock, &is_file_operation_possible, sizeof(is_file_operation_possible), NULL)) {
+                printf("[Failed to receive is_file_operation_possible] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
                 return;
             }
-            if(not is_file_size_ok) {
-                printf("[File size is not ok]\n");
+            printf("[is_file_operation_possible: %d]\n", is_file_operation_possible);
+            if(not is_file_operation_possible) {
                 return;
             }
         }
-        size_t file_size;
+        uint32_t file_size;
         if(not checked_read(sock, &file_size, sizeof(file_size), NULL)) {
             printf("[Failed to receive file size] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             return;
         }
-        be64toh(file_size);
-    });
-    printf("[File size: %ld]\n", file_size);    
+        file_size = ntohl(file_size);
+        
+    printf("[File size: %u]\n", file_size);
     {
         const bool is_client_ready = file_size <= config->max_file_size;
+        if(not checked_write(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
+            printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
+        }
         if(not is_client_ready) {
-            printf("[Server file size is too large: %lu]\n", file_size);
-            if(not checked_write(sock, &is_client_ready, sizeof(is_client_ready), NULL)) {
-                printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
-            }
+            printf("[Server file size is too large: %u]\n", file_size);
             return;
         }
     }
+    // while(true) {}
     int pipefd[2];
     if(pipe(pipefd) < 0) {
         printf("[Can not create pipe] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
@@ -160,6 +161,8 @@ static void main_logic(const ClientConfig *const config, const int sock) {
                 printf("[Failed to send is_client_ready: %d] [errno: %d] [strerror: %s]\n", is_client_ready, errno, strerror(errno));
             } else {
                 receive_file(sock, file_size, pipefd[0], pipefd[1], file_fd);
+                uint8_t signal_end_byte;
+                checked_write(sock, &signal_end_byte, sizeof(signal_end_byte), NULL);
             }
             if(not checked_close(file_fd)) {
                 printf("[Failed to close file] [errno: %d] [strerror: %s]\n", errno, strerror(errno));

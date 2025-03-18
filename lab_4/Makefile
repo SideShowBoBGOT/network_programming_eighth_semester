@@ -1,5 +1,5 @@
 CC:=clang
-CFLAGS:=-std=gnu11 -O0 -g3 -Weverything -Werror -Wno-covered-switch-default -Wno-declaration-after-statement -Wno-alloca -Wno-padded -Wno-unsafe-buffer-usage -Wno-gnu-statement-expression -Wno-vla -Wno-shadow -Wno-disabled-macro-expansion
+CFLAGS:=-std=gnu11 -O0 -g3 -Weverything -Werror -Wno-unreachable-code -Wno-unused-function -Wno-covered-switch-default -Wno-declaration-after-statement -Wno-alloca -Wno-padded -Wno-unsafe-buffer-usage -Wno-gnu-statement-expression -Wno-vla -Wno-shadow -Wno-disabled-macro-expansion
 
 BUILD_DIR:=$(CURDIR)/build
 

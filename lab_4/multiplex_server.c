@@ -28,6 +28,7 @@ typedef enum {
     ClientStateTag_SEND_FILE_SIZE,
     ClientStateTag_RECEIVE_CLIENT_READY,
     ClientStateTag_SEND_CHUNK,
+    ClientStateTag_RECEIVE_FINISH,
 } ClientStateTag;
 
 typedef struct {
@@ -63,6 +64,9 @@ typedef struct {
             off_t file_size;
             off_t file_offset;
         } send_chunk;
+        struct ClientState_ReceiveFinish {
+            int32_t client_fd;
+        } receive_finish;
     } value;
 } ClientState;
 
@@ -72,6 +76,8 @@ static ClientState construct_drop_connection(
     clients_count_t *const clients_count,
     const int32_t client_fd
 ) {
+    printf("[client_fd: %d] [drop connection]\n", client_fd);
+
     --(*clients_count);
     checked_close(client_fd);
     ClientState state;
@@ -85,7 +91,7 @@ static ClientState ClientState_transition(
     const fd_set* const readfds,
     const fd_set* const writefds,
     char* const filepath_buffer,
-    const uint16_t filepath_buffer_len_with_slash
+    const size_t filepath_buffer_offset
 ) {
     switch (state->tag) {
         case ClientStateTag_INVALID: {
@@ -96,7 +102,8 @@ static ClientState ClientState_transition(
             if(!FD_ISSET(cur_state->client_fd, readfds)) {
                 return *state;
             }
-            
+            printf("[client_fd: %d] [ClientStateTag_RECEIVE_PROTOCOL_VERSION]\n", cur_state->client_fd);
+
             uint8_t client_protocol_version;
             if(
                 not checked_read(cur_state->client_fd, &client_protocol_version, sizeof(client_protocol_version), NULL)
@@ -115,6 +122,8 @@ static ClientState ClientState_transition(
             if(!FD_ISSET(cur_state->client_fd, writefds)) {
                 return *state;
             }
+            printf("[client_fd: %d] [ClientStateTag_SEND_MATCH_PROTOCOL_VERSION]\n", cur_state->client_fd);
+            
             const bool is_protocol_match = cur_state->client_protocol_version == PROTOCOL_VERSION;
             if(not checked_write(cur_state->client_fd, &is_protocol_match, sizeof(is_protocol_match), NULL)) {
                 return construct_drop_connection(clients_count, cur_state->client_fd);
@@ -132,11 +141,16 @@ static ClientState ClientState_transition(
             if(!FD_ISSET(cur_state->client_fd, readfds)) {
                 return *state;
             }
-            if(not checked_read(cur_state->client_fd, filepath_buffer + filepath_buffer_len_with_slash, NAME_MAX, NULL)) {
+            printf("[client_fd: %d] [ClientStateTag_RECEIVE_FILE_NAME]\n", cur_state->client_fd);
+
+            if(not checked_read(cur_state->client_fd, filepath_buffer + filepath_buffer_offset, NAME_MAX, NULL)) {
                 return construct_drop_connection(clients_count, cur_state->client_fd);
             }
+            filepath_buffer[filepath_buffer_offset + NAME_MAX] = '\0';
+            printf("[client_fd: %d] [filepath_buffer: %s]\n", cur_state->client_fd, filepath_buffer);
+            
             ClientState new_state;
-            new_state.tag = ClientStateTag_SEND_MATCH_PROTOCOL_VERSION;
+            new_state.tag = ClientStateTag_SEND_FILE_OPERATION_POSSIBILITY;
             new_state.value.send_file_operation_possibility.client_fd = cur_state->client_fd;
             new_state.value.send_file_operation_possibility.fd = open(filepath_buffer, O_RDONLY);
             return new_state;
@@ -146,20 +160,24 @@ static ClientState ClientState_transition(
             if(!FD_ISSET(cur_state->client_fd, writefds)) {
                 return *state;
             }
+            printf("[client_fd: %d] [ClientStateTag_SEND_FILE_OPERATION_POSSIBILITY]\n", cur_state->client_fd);
+
             bool is_possible = cur_state->client_fd != -1;
             if(not is_possible) {
                 checked_write(cur_state->client_fd, &is_possible, sizeof(is_possible), NULL);
                 return construct_drop_connection(clients_count, cur_state->client_fd);
             }
             struct stat st;
-            is_possible = fstat(cur_state->client_fd, &st) != -1; 
+            is_possible = fstat(cur_state->fd, &st) != -1; 
             if(not is_possible) {
+                checked_close(cur_state->fd);
                 checked_write(cur_state->client_fd, &is_possible, sizeof(is_possible), NULL);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
+            }
+            if(not checked_write(cur_state->client_fd, &is_possible, sizeof(is_possible), NULL)) {
                 checked_close(cur_state->fd);
                 return construct_drop_connection(clients_count, cur_state->client_fd);
             }
-            checked_write(cur_state->client_fd, &is_possible, sizeof(is_possible), NULL);
-
             ClientState new_state;
             new_state.tag = ClientStateTag_SEND_FILE_SIZE;
             new_state.value.send_file_size.client_fd = cur_state->client_fd;
@@ -172,6 +190,9 @@ static ClientState ClientState_transition(
             if(!FD_ISSET(cur_state->client_fd, writefds)) {
                 return *state;
             }
+            printf("[client_fd: %d] [ClientStateTag_SEND_FILE_SIZE]\n", cur_state->client_fd);
+
+            printf("[client_fd: %d] [cur_state->file_size: %ld]\n", cur_state->client_fd, cur_state->file_size);
             const uint32_t network_file_size = htonl((uint32_t)cur_state->file_size);
             checked_write(cur_state->client_fd, &network_file_size, sizeof(network_file_size), NULL);
 
@@ -187,12 +208,18 @@ static ClientState ClientState_transition(
             if(!FD_ISSET(cur_state->client_fd, readfds)) {
                 return *state;
             }
+            printf("[client_fd: %d] [ClientStateTag_RECEIVE_CLIENT_READY]\n", cur_state->client_fd);
+
             bool is_client_ready;
-            if(not checked_read(cur_state->client_fd, &is_client_ready, is_client_ready, NULL) || not is_client_ready) {
+            if(not checked_read(cur_state->client_fd, &is_client_ready, sizeof(is_client_ready), NULL)) {
                 checked_close(cur_state->fd);
                 return construct_drop_connection(clients_count, cur_state->client_fd);
             }
-
+            printf("[client_fd: %d] [is_client_ready: %d]\n", cur_state->client_fd, is_client_ready);
+            if(not is_client_ready) {
+                checked_close(cur_state->fd);
+                return construct_drop_connection(clients_count, cur_state->client_fd);
+            }
             ClientState new_state;
             new_state.tag = ClientStateTag_SEND_CHUNK;
             new_state.value.send_chunk.client_fd = cur_state->client_fd;
@@ -207,21 +234,42 @@ static ClientState ClientState_transition(
             if(!FD_ISSET(new_cur_state->client_fd, writefds)) {
                 return new_generic_state;
             }
+            printf("[client_fd: %d] [ClientStateTag_SEND_CHUNK]\n", new_cur_state->client_fd);
 
             const off_t old_offset = new_cur_state->file_offset;
             while(true) {
+                printf("[client_fd: %d] [new_cur_state->file_offset: %ld]\n", new_cur_state->client_fd, new_cur_state->file_offset);
                 if(new_cur_state->file_offset >= new_cur_state->file_size) {
                     checked_close(new_cur_state->fd);
-                    return construct_drop_connection(clients_count, new_cur_state->client_fd);
+                    new_generic_state.tag = ClientStateTag_RECEIVE_FINISH;
+                    new_generic_state.value.receive_finish.client_fd = state->value.send_chunk.client_fd;
+                    return new_generic_state;
                 }
                 const off_t diff_offset = CHUNK_SIZE - (new_cur_state->file_offset - old_offset);
                 if(diff_offset <= 0) {
                     break;
                 }
                 const ssize_t nsendfile = sendfile(new_cur_state->client_fd, new_cur_state->fd, &new_cur_state->file_offset, (size_t)diff_offset);
-                ASSERT_POSIX(nsendfile);
+                if(nsendfile == -1) {
+                    printf("[Failed to sendfile] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
+                    break;
+                }
             }            
             return new_generic_state;
+        }
+        case ClientStateTag_RECEIVE_FINISH: {
+            const struct ClientState_ReceiveFinish *const cur_state = &state->value.receive_finish;
+            if(!FD_ISSET(cur_state->client_fd, readfds)) {
+                return *state;
+            }
+            printf("[client_fd: %d] [ClientStateTag_RECEIVE_FINISH]\n", cur_state->client_fd);
+
+            uint8_t signal_end_byte;
+            checked_read(cur_state->client_fd, &signal_end_byte, sizeof(signal_end_byte), NULL);
+
+            printf("[client_fd: %d] [received signal_end_byte]\n", cur_state->client_fd);
+
+            return construct_drop_connection(clients_count, cur_state->client_fd);
         }
         default: {
             __builtin_unreachable();
@@ -242,7 +290,7 @@ static in_port_t parse_port(const char *const value) {
     const uint64_t port = strtoul(value, NULL, 10);
     assert(errno == 0);
     assert(port == (uint64_t)((in_port_t)port));
-    return (in_port_t)port;
+    return htons((in_port_t)port);
 }
 static uint16_t parse_max_clients_count(const char *const value) {
     const uint64_t max_clients_count = strtoul(value, NULL, 10);
@@ -276,6 +324,9 @@ static int32_t ClientState_client_fd(const ClientState *const state) {
         }
         case ClientStateTag_SEND_CHUNK: {
             return state->value.send_chunk.client_fd;
+        }
+        case ClientStateTag_RECEIVE_FINISH: {
+            return state->value.receive_finish.client_fd;
         }
         default: {
             __builtin_unreachable();
@@ -334,12 +385,12 @@ int main(
         ASSERT_POSIX(listen(listenfd, MAX_BACKLOG));
     }
     char filepath_buffer[PATH_MAX];
-    uint16_t filepath_buffer_len_with_slash;
+    uint16_t filepath_buffer_offset;
     {
         static const uint8_t slash_character_addition = 1;
         const size_t len_with_slash = strlen(argv[3]) + slash_character_addition;
         assert((len_with_slash + NAME_MAX) <= PATH_MAX);
-        filepath_buffer_len_with_slash = (uint16_t)len_with_slash;
+        filepath_buffer_offset = (uint16_t)len_with_slash;
         strcpy(filepath_buffer, argv[3]);
         strcat(filepath_buffer, "/");
     }
@@ -347,8 +398,6 @@ int main(
     const uint16_t max_clients_count = parse_max_clients_count(argv[4]);
 
     fd_set readfds, writefds;
-    clients_count_t clients_count = 0;
-
     ClientState *const client_state_array = calloc(max_clients_count, sizeof(ClientState));
     clients_count_t client_state_array_count = 0;
     for(size_t i = 0; i < max_clients_count; ++i) {
@@ -363,8 +412,10 @@ int main(
             printf("[select] [errno: %d] [strerror: %s]\n", errno, strerror(errno));
             continue;
         }
+        // printf("[select triggered]\n");
 
-        if(FD_ISSET(listenfd, &readfds)) {
+
+        if(FD_ISSET(listenfd, &readfds) && client_state_array_count < max_clients_count) {
             struct sockaddr_in address;
             socklen_t addr_len = sizeof(address);
             const int client_fd = accept(listenfd, (struct sockaddr *)&address, &addr_len);
@@ -375,20 +426,15 @@ int main(
     
             printf("[New connection] [client_fd: %d] [IP: %s] [port: %d]\n",
                 client_fd, inet_ntoa(address.sin_addr), ntohs(address.sin_port));
-    
-            for(size_t i = 0; i < client_state_array_count; ++i) {
-                if (client_state_array[i].tag == ClientStateTag_INVALID) {
-                    client_state_array[i].tag = ClientStateTag_RECEIVE_PROTOCOL_VERSION;
-                    client_state_array[i].value.receive_protocol_version.client_fd = client_fd;
-                    ++clients_count;
-                    break;
-                }
-            }
+            
+            client_state_array[client_state_array_count].tag = ClientStateTag_RECEIVE_PROTOCOL_VERSION;
+            client_state_array[client_state_array_count].value.receive_protocol_version.client_fd = client_fd;
+            ++client_state_array_count;
         }
 
-        for(size_t i = 0; i < clients_count; ++i) {
+        for(size_t i = 0; i < client_state_array_count; ++i) {
             ClientState* state = &client_state_array[i];
-            *state = ClientState_transition(&clients_count, state, &readfds, &writefds, filepath_buffer, filepath_buffer_len_with_slash);
+            *state = ClientState_transition(&client_state_array_count, state, &readfds, &writefds, filepath_buffer, filepath_buffer_offset);
         }
     }
 
