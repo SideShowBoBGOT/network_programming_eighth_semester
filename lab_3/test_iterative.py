@@ -6,15 +6,14 @@ import time
 SCRIPT_DIR = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR = SCRIPT_DIR / 'build'
 CLIENT_EXECUTABLE = BUILD_DIR / 'client.o'
-SERVER_EXECUTABLE = BUILD_DIR / 'multiplex_server.o'
+SERVER_EXECUTABLE = BUILD_DIR / 'iterative_server.o'
 ADDRESS  = '0.0.0.0'
-PORT = '55001'
+PORT = '55002'
 MAX_FILE_SIZE = '1000000000'
-MAX_CLIENTS = '100'
 
 BOOKS_DIR = pathlib.Path('/home/sideshowbobgot/university/C')
 
-server = subprocess.Popen([SERVER_EXECUTABLE, ADDRESS, PORT, BOOKS_DIR, MAX_CLIENTS])
+server = subprocess.Popen([SERVER_EXECUTABLE, ADDRESS, PORT, BOOKS_DIR])
 
 clients: list[subprocess.Popen[bytes]] = []
 for dirpath, dirnames, filenames in os.walk(BOOKS_DIR):
